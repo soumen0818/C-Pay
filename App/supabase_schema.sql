@@ -443,33 +443,13 @@ USING (
   )
 );
 
+-- Only the relayer/service role may insert or update transaction rows.
+-- This prevents forged client writes and keeps merchant revenue/status
+-- authoritative.
 DROP POLICY IF EXISTS "transactions_insert" ON transactions;
 DROP POLICY IF EXISTS "transactions_insert_participant" ON transactions;
-CREATE POLICY "transactions_insert_participant" ON transactions
-FOR INSERT
-WITH CHECK (
-  auth.uid() IS NOT NULL AND (
-    from_address = current_wallet_address()
-    OR to_address = current_wallet_address()
-  )
-);
-
 DROP POLICY IF EXISTS "transactions_update" ON transactions;
 DROP POLICY IF EXISTS "transactions_update_participant" ON transactions;
-CREATE POLICY "transactions_update_participant" ON transactions
-FOR UPDATE
-USING (
-  auth.uid() IS NOT NULL AND (
-    from_address = current_wallet_address()
-    OR to_address = current_wallet_address()
-  )
-)
-WITH CHECK (
-  auth.uid() IS NOT NULL AND (
-    from_address = current_wallet_address()
-    OR to_address = current_wallet_address()
-  )
-);
 
 DROP POLICY IF EXISTS "merchant_qr_codes_select" ON merchant_qr_codes;
 DROP POLICY IF EXISTS "merchant_qr_codes_select_own" ON merchant_qr_codes;

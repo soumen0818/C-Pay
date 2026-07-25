@@ -6,6 +6,7 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const crypto = require('crypto');
 const StellarSdk = require('@stellar/stellar-sdk');
+const { buildTrustedTransactionRow } = require('./receiptPersistence');
 
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
@@ -418,6 +419,18 @@ app.post('/payments/submit', requireAuthenticatedUser, async (req, res) => {
     }
   }
 
+  const cachedIntent = intentId ? contractIntentCache.get(intentId) : null;
+  await recordPaymentReceipt({
+    txHash: result.hash,
+    source: payment.source,
+    destination: payment.destination,
+    amount: payment.amount,
+    merchantId: cachedIntent?.merchantId || null,
+    transactionType: cachedIntent?.merchantId ? 'merchant' : 'personal',
+    intentId,
+    note: cachedIntent?.note || null,
+  });
+
   const response = {
     hash: result.hash,
     ledger: result.ledger,
@@ -532,7 +545,7 @@ app.get('/tx/:hash', async (req, res) => {
     const tx = await server.transactions().transaction(hash).call();
     return res.json({
       hash,
-      status: 'success',
+      status: tx.successful ? 'success' : 'failed',
       ledger: tx.ledger,
       createdAt: tx.created_at,
       feeCharged: tx.fee_charged,
@@ -1314,6 +1327,54 @@ async function getPersistedAddMoneyRetryAfterSeconds(accountId) {
   } catch (error) {
     console.warn('Add Money claim cooldown lookup skipped:', error.message);
     return 0;
+  }
+}
+
+async function recordPaymentReceipt({
+  txHash,
+  source,
+  destination,
+  amount,
+  merchantId,
+  transactionType,
+  intentId,
+  note,
+}) {
+  if (!isSupabasePersistenceEnabled()) {
+    return;
+  }
+
+  try {
+    const userRows = await supabaseRestRequest(
+      `users?select=id&wallet_address=eq.${encodeURIComponent(source)}&limit=1`
+    );
+    const userId = Array.isArray(userRows) && userRows[0]?.id ? userRows[0].id : null;
+    const row = buildTrustedTransactionRow({
+      userId,
+      txHash,
+      source,
+      destination,
+      amount,
+      merchantId,
+      transactionType,
+      intentId,
+      note,
+    }, {
+      networkName: config.networkName,
+      assetCode: config.assetCode,
+      assetIssuer: config.assetIssuer,
+      timestamp: new Date(),
+    });
+
+    await supabaseRestRequest('transactions?on_conflict=tx_hash', {
+      method: 'POST',
+      headers: {
+        Prefer: 'resolution=merge-duplicates,return=minimal',
+      },
+      body: JSON.stringify(row),
+    });
+  } catch (error) {
+    console.warn('Payment receipt persistence skipped:', error.message);
   }
 }
 

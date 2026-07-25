@@ -482,7 +482,7 @@ export async function getMerchantAnalytics(merchantId: string): Promise<{
 
     const { data: transactions } = await supabase
       .from('transactions')
-      .select('amount, status, transaction_type')
+      .select('amount, status, internal_status, transaction_type')
       .eq('to_address', merchant.data.wallet_address)
       .eq('transaction_type', 'merchant');  // Only count merchant QR payments
 
@@ -495,17 +495,18 @@ export async function getMerchantAnalytics(merchantId: string): Promise<{
       };
     }
 
-    const totalTransactions = transactions.length;
-    const successTransactions = transactions.filter(
-      (tx) => tx.status === 'success'
-    ).length;
-    const totalRevenue = transactions
-      .filter((tx) => tx.status === 'success')
+    const serverReceiptTransactions = transactions.filter(
+      (tx) => tx.status === 'success' || tx.status === 'failed'
+    );
+    const successfulReceipts = serverReceiptTransactions.filter(
+      (tx) => tx.status === 'success' && tx.internal_status === 'confirmed'
+    );
+    const totalTransactions = serverReceiptTransactions.length;
+    const successTransactions = successfulReceipts.length;
+    const totalRevenue = successfulReceipts
       .reduce((sum, tx) => sum + parseFloat(tx.amount), 0)
       .toString();
-    const pendingTransactions = transactions.filter(
-      (tx) => tx.status === 'pending'
-    ).length;
+    const pendingTransactions = 0;
 
     return { 
       totalTransactions, 
@@ -557,7 +558,7 @@ export async function getMerchantTransactions(
 
     const { data: transactions, error } = await supabase
       .from('transactions')
-      .select('id, transaction_id, tx_hash, from_address, to_address, amount, status, created_at, merchant_name, sender_name, transaction_type')
+      .select('id, transaction_id, tx_hash, from_address, to_address, amount, status, internal_status, created_at, merchant_name, sender_name, transaction_type')
       .eq('to_address', merchant.data.wallet_address)
       .eq('transaction_type', 'merchant')  // Only show payments via merchant QR
       .order('created_at', { ascending: false })
@@ -568,7 +569,9 @@ export async function getMerchantTransactions(
       return [];
     }
 
-    return (transactions || []).filter((tx) => isValidTransactionHash(tx.tx_hash));
+    return (transactions || [])
+      .filter((tx) => isValidTransactionHash(tx.tx_hash))
+      .filter((tx) => tx.status !== 'pending');
   } catch (error) {
     console.error('Error getting merchant transactions:', error);
     return [];

@@ -110,14 +110,12 @@ export async function saveTransaction(tx: Transaction): Promise<void> {
   try {
     const networkConfig = getNetworkConfig();
 
-    const hasBlockchainHash = isValidTransactionHash(tx.tx_hash);
-
-    // Save locally first (offline-first approach)
+    // Keep the mobile app's pending/cache record local-only. Canonical receipt
+    // persistence must happen in a trusted backend after Stellar submission and
+    // contract-intent verification have succeeded.
     const existing = await AsyncStorage.getItem('transactions');
     const txs = existing ? JSON.parse(existing) : [];
 
-    // Add timestamp and network metadata. transaction_id is legacy and stays nullable;
-    // the Stellar transaction hash is the receipt identifier.
     const txWithTime = {
       ...tx,
       created_at: tx.created_at || new Date().toISOString(),
@@ -140,71 +138,6 @@ export async function saveTransaction(tx: Transaction): Promise<void> {
 
     console.log('✅ Transaction saved locally:', txWithTime.tx_hash);
 
-    if (!hasBlockchainHash) {
-      console.log('Skipping Supabase sync until a Stellar transaction hash exists');
-      storageEvents.emit('transactionSaved', txWithTime);
-      return;
-    }
-
-    // Sync to Supabase (cloud backup) - non-blocking
-    try {
-      // Get user_id from wallet address
-      let userId: string | null = null;
-      
-      if (tx.from_address) {
-        // Get phone number and display name from AsyncStorage if available
-        const phoneNumber = await AsyncStorage.getItem('user_phone');
-        const displayName = await AsyncStorage.getItem('user_name');
-        
-        userId = await getOrCreateUser(tx.from_address, phoneNumber || undefined, displayName || undefined);
-      }
-
-      // Get sender's display name from users table in database
-      let senderName = tx.sender_name || null;
-      if (!senderName && tx.from_address) {
-        senderName = await getUserDisplayName(tx.from_address);
-      }
-      // Fallback to AsyncStorage if not found in database
-      if (!senderName) {
-        senderName = await AsyncStorage.getItem('user_name');
-      }
-
-      const { data, error } = await supabase.from('transactions').upsert({
-        user_id: userId,
-        transaction_id: tx.transaction_id || null,
-        transaction_type: tx.transaction_type || 'personal',
-        merchant_id: tx.merchant_id || null,
-        tx_hash: tx.tx_hash,
-        to_address: tx.to_address,
-        from_address: tx.from_address || '',
-        amount: parseFloat(tx.amount),
-        stellar_network: tx.stellar_network || networkConfig.network,
-        asset_code: tx.asset_code || networkConfig.assetCode,
-        asset_issuer: tx.asset_issuer || networkConfig.assetIssuer,
-        status: tx.status,
-        internal_status: tx.internal_status || 'processing',
-        user_visible_status: tx.user_visible_status || 'success',
-        merchant_name: tx.merchant_name,
-        note: tx.note || null,
-        sender_name: senderName || null,
-        recipient_name: tx.recipient_name || tx.merchant_name || null,
-        // Use current timestamp - Supabase will store in UTC
-        created_at: new Date().toISOString(),
-        submitted_at: tx.submitted_at || new Date().toISOString(),
-        confirmed_at: tx.confirmed_at,
-        failure_reason: tx.failure_reason,
-      }, { onConflict: 'tx_hash' }).select();
-
-      if (error) {
-        console.error('❌ Supabase sync error:', error);
-        console.error('Error details:', JSON.stringify(error, null, 2));
-      } else {
-        console.log('✅ Transaction synced to Supabase:', data);
-      }
-    } catch (syncError) {
-      console.log('Supabase sync skipped:', syncError);
-    }
-    
     // Emit event for real-time UI updates
     storageEvents.emit('transactionSaved', txWithTime);
     console.log('📡 Emitted transactionSaved event');
@@ -285,7 +218,9 @@ export async function updateTransactionStatus(
       return;
     }
 
-    // Update locally
+    // Keep local status transitions for the UI cache only. The canonical
+    // transaction receipt is persisted by the relayer after Horizon acceptance
+    // and contract-intent verification.
     const existing = await AsyncStorage.getItem('transactions');
     if (existing) {
       const txs = JSON.parse(existing);
@@ -303,18 +238,6 @@ export async function updateTransactionStatus(
       );
       await AsyncStorage.setItem('transactions', JSON.stringify(updated));
     }
-
-    // Update in Supabase (triggers Realtime!)
-    await supabase
-      .from('transactions')
-      .update({
-        status,
-        internal_status: internalStatus || status,
-        user_visible_status: status,
-        confirmed_at: confirmedAt || (status === 'success' ? new Date().toISOString() : null),
-        failure_reason: failureReason,
-      })
-      .eq('tx_hash', txHash);
   } catch (error) {
     console.error('Error updating transaction status:', error);
   }
