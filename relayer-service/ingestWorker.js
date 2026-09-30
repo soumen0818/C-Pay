@@ -43,7 +43,6 @@ class IngestWorker {
 
     // Cache of known wallet addresses to user IDs
     this.walletUserCache = new Map();
-    this.merchantWalletCache = new Map();
     this.lastCacheRefresh = 0;
   }
 
@@ -166,22 +165,10 @@ class IngestWorker {
         }
       }
 
-      try {
-        const merchants = await this.supabaseRequest('merchants?select=id,wallet_address,business_name');
-        if (Array.isArray(merchants)) {
-          this.merchantWalletCache.clear();
-          for (const m of merchants) {
-            if (m.wallet_address) {
-              this.merchantWalletCache.set(m.wallet_address, { id: m.id, business_name: m.business_name });
-            }
-          }
-        }
-      } catch (_) {
-        // Merchants table might be empty or unconfigured
-      }
-
       this.lastCacheRefresh = now;
     } catch (err) {
+      this.errorCount++;
+      this.lastError = err.message;
       console.warn('[IngestWorker] Failed to refresh wallet cache:', err.message);
     }
   }
@@ -259,51 +246,62 @@ class IngestWorker {
       if (latestLedgers.records && latestLedgers.records.length > 0) {
         this.latestNetworkLedger = latestLedgers.records[0].sequence;
       }
-    } catch (_) {}
+    } catch (err) {
+      this.errorCount++;
+      this.lastError = err.message;
+      console.warn('[IngestWorker] Failed to update latest ledger:', err.message);
+    }
   }
 
   async processOperation(operation) {
     if (!operation || !operation.id) return;
 
-    // Filter payment-related operations
-    const opType = operation.type;
-    const isPaymentOp = [
-      'payment',
-      'path_payment_strict_receive',
-      'path_payment_strict_send',
-      'create_account',
-    ].includes(opType);
-
-    if (!isPaymentOp) {
-      await this.saveStoredCursor(operation.paging_token || operation.id);
+    // Filter to payment operations only (drop create_account and path payments)
+    if (operation.type !== 'payment') {
+      const ledgerSeq = this.extractLedgerSequence(operation);
+      if (ledgerSeq) this.lastIngestedLedger = ledgerSeq;
+      await this.saveStoredCursor(operation.paging_token || operation.id, ledgerSeq);
       return;
     }
 
     const details = this.extractOperationDetails(operation);
     if (!details) {
-      await this.saveStoredCursor(operation.paging_token || operation.id);
+      const ledgerSeq = this.extractLedgerSequence(operation);
+      if (ledgerSeq) this.lastIngestedLedger = ledgerSeq;
+      await this.saveStoredCursor(operation.paging_token || operation.id, ledgerSeq);
       return;
     }
 
-    // Match users
+    // Filter to configured asset (do not ingest unrelated assets)
+    if (details.asset_code !== this.assetCode) {
+      if (details.ledger_sequence) this.lastIngestedLedger = details.ledger_sequence;
+      await this.saveStoredCursor(operation.paging_token || operation.id, details.ledger_sequence);
+      return;
+    }
+    if (this.assetIssuer && details.asset_issuer && details.asset_issuer !== this.assetIssuer) {
+      if (details.ledger_sequence) this.lastIngestedLedger = details.ledger_sequence;
+      await this.saveStoredCursor(operation.paging_token || operation.id, details.ledger_sequence);
+      return;
+    }
+
+    // Match users - restrict ingestion to known accounts
     const fromUserId = this.walletUserCache.get(details.from_address) || null;
     const toUserId = this.walletUserCache.get(details.to_address) || null;
     const matchedUserId = fromUserId || toUserId;
 
-    // Match merchant
-    const merchantInfo = this.merchantWalletCache.get(details.to_address);
-    const transactionType = merchantInfo ? 'merchant' : 'personal';
-    const merchantId = merchantInfo ? merchantInfo.id : null;
-    const recipientName = merchantInfo ? (merchantInfo.business_name || null) : null;
+    if (!matchedUserId) {
+      // Neither party is known to the system: skip storing this transaction
+      if (details.ledger_sequence) this.lastIngestedLedger = details.ledger_sequence;
+      await this.saveStoredCursor(operation.paging_token || operation.id, details.ledger_sequence);
+      return;
+    }
 
     // Ingest into Supabase
     if (this.isConfigured) {
       await this.upsertTransaction({
         tx_hash: details.tx_hash,
         op_index: details.op_index,
-        transaction_type: transactionType,
-        merchant_id: merchantId,
-        recipient_name: recipientName,
+        transaction_type: 'personal',
         from_address: details.from_address,
         to_address: details.to_address,
         amount: details.amount,
@@ -329,31 +327,17 @@ class IngestWorker {
     const txHash = op.transaction_hash;
     if (!txHash) return null;
 
-    let fromAddress = '';
-    let toAddress = '';
-    let amount = '0';
-    let assetCode = 'XLM';
-    let assetIssuer = null;
+    if (op.type !== 'payment') {
+      return null;
+    }
 
-    if (op.type === 'payment') {
-      fromAddress = op.from || op.source_account || '';
-      toAddress = op.to || '';
-      amount = op.amount || '0';
-      assetCode = op.asset_type === 'native' ? 'XLM' : (op.asset_code || 'USDC');
-      assetIssuer = op.asset_issuer || null;
-    } else if (op.type === 'create_account') {
-      fromAddress = op.funder || op.source_account || '';
-      toAddress = op.account || '';
-      amount = op.starting_balance || '0';
-      assetCode = 'XLM';
-      assetIssuer = null;
-    } else if (op.type.startsWith('path_payment')) {
-      fromAddress = op.from || op.source_account || '';
-      toAddress = op.to || '';
-      amount = op.amount || op.dest_amount || '0';
-      assetCode = op.asset_type === 'native' ? 'XLM' : (op.asset_code || 'USDC');
-      assetIssuer = op.asset_issuer || null;
-    } else {
+    const fromAddress = op.from || op.source_account || '';
+    const toAddress = op.to || '';
+    const amount = op.amount || '0';
+    const assetCode = op.asset_type === 'native' ? 'XLM' : (op.asset_code || null);
+    const assetIssuer = op.asset_type === 'native' ? null : (op.asset_issuer || null);
+
+    if (!assetCode) {
       return null;
     }
 
@@ -375,11 +359,21 @@ class IngestWorker {
   }
 
   extractOpIndex(op) {
-    if (op.paging_token) {
-      // Paging tokens in Horizon are formed as (ledgerSeq * 4096 + txIndex) * 4096 + opIndex
-      const parts = String(op.paging_token).split('-');
-      if (parts.length > 1) {
-        return Number(parts[parts.length - 1]) || 0;
+    const raw = op.paging_token || op.id;
+    if (raw) {
+      const str = String(raw);
+      if (str.includes('-')) {
+        const parts = str.split('-');
+        const parsed = Number(parts[parts.length - 1]);
+        if (!Number.isNaN(parsed)) return parsed;
+      }
+      try {
+        const bigToken = BigInt(str);
+        return Number(bigToken & 4095n);
+      } catch (err) {
+        this.errorCount++;
+        this.lastError = err.message;
+        console.warn('[IngestWorker] Failed to extract op index from token:', err.message);
       }
     }
     return 0;
@@ -389,19 +383,29 @@ class IngestWorker {
     if (op.transaction_attr && op.transaction_attr.ledger) {
       return op.transaction_attr.ledger;
     }
-    if (op.paging_token) {
+    const raw = op.paging_token || op.id;
+    if (raw) {
       try {
-        const bigToken = BigInt(op.paging_token);
-        const ledger = Number(bigToken >> 32n);
+        const str = String(raw).split('-')[0];
+        const bigToken = BigInt(str);
+        const ledger = Number(bigToken >> 24n);
         if (ledger > 0) return ledger;
-      } catch (_) {}
+        if (str.length <= 10) {
+          const direct = Number(str);
+          if (direct > 0 && direct < 16777216) return direct;
+        }
+      } catch (err) {
+        this.errorCount++;
+        this.lastError = err.message;
+        console.warn('[IngestWorker] Failed to extract ledger sequence from token:', err.message);
+      }
     }
     return null;
   }
 
   async upsertTransaction(tx) {
     try {
-      await this.supabaseRequest('transactions', {
+      await this.supabaseRequest('transactions?on_conflict=tx_hash,op_index', {
         method: 'POST',
         headers: {
           Prefer: 'resolution=merge-duplicates',
@@ -409,6 +413,8 @@ class IngestWorker {
         body: JSON.stringify(tx),
       });
     } catch (err) {
+      this.errorCount++;
+      this.lastError = err.message;
       console.warn('[IngestWorker] Upsert transaction failed:', err.message);
       throw err;
     }

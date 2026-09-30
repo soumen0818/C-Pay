@@ -12,7 +12,7 @@ function makeResponse(ok, status, data) {
   };
 }
 
-describe('Server-Authoritative Transactions & Merchant Revenue (#10)', () => {
+describe('Server-Authoritative Transactions (#10)', () => {
   const MOCK_SUPABASE_URL = 'https://mock.supabase.co';
   const MOCK_SERVICE_ROLE_KEY = 'mock-service-role-key';
   const MOCK_ANON_KEY = 'mock-anon-key';
@@ -56,13 +56,6 @@ describe('Server-Authoritative Transactions & Merchant Revenue (#10)', () => {
         ]);
       }
 
-      // Merchant cache
-      if (urlStr.includes('/rest/v1/merchants')) {
-        return makeResponse(true, 200, [
-          { id: 'merchant-101', wallet_address: 'GCMERCHANTRECEIVER', business_name: 'SuperMart' },
-        ]);
-      }
-
       return makeResponse(true, 200, []);
     });
   });
@@ -80,10 +73,10 @@ describe('Server-Authoritative Transactions & Merchant Revenue (#10)', () => {
       },
       body: JSON.stringify({
         tx_hash: 'forged-hash-999',
-        to_address: 'GCMERCHANTRECEIVER',
+        to_address: 'GCRECEIVER_WALLET',
         amount: '1000000.00',
         status: 'success',
-        transaction_type: 'merchant',
+        transaction_type: 'personal',
       }),
     });
 
@@ -109,7 +102,7 @@ describe('Server-Authoritative Transactions & Merchant Revenue (#10)', () => {
       paging_token: '1000-1',
       transaction_hash: 'trusted-tx-hash-777',
       from: 'GCLERKPAYER',
-      to: 'GCMERCHANTRECEIVER',
+      to: 'GCRECEIVER_WALLET',
       amount: '45.5000000',
       asset_type: 'credit_alphanum4',
       asset_code: 'USDC',
@@ -124,11 +117,9 @@ describe('Server-Authoritative Transactions & Merchant Revenue (#10)', () => {
     expect(txUpsert.body).toMatchObject({
       tx_hash: 'trusted-tx-hash-777',
       from_address: 'GCLERKPAYER',
-      to_address: 'GCMERCHANTRECEIVER',
+      to_address: 'GCRECEIVER_WALLET',
       amount: '45.5000000',
-      transaction_type: 'merchant',
-      merchant_id: 'merchant-101',
-      recipient_name: 'SuperMart',
+      transaction_type: 'personal',
       status: 'success',
     });
   });
