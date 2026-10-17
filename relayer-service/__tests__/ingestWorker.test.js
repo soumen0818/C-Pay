@@ -1,6 +1,6 @@
 'use strict';
 
-const { IngestWorker, BoundedLruMap, DEFAULT_CURSOR_KEY } = require('../ingestWorker');
+const { IngestWorker, BoundedLruMap, SupabaseRequestError, DEFAULT_CURSOR_KEY } = require('../ingestWorker');
 
 function makeResponse(ok, status, data) {
   const body = JSON.stringify(data);
@@ -417,6 +417,68 @@ describe('IngestWorker', () => {
     expect(patchReq.body.status).toBe('failed');
     expect(patchReq.body.internal_status).toBe('failed');
     expect(patchReq.body.failure_reason).toContain('not found on chain');
+  });
+
+  test('supabaseRequest throws typed SupabaseRequestError on PostgREST error', async () => {
+    const postgrestBody = {
+      code: '23505',
+      details: 'Key (id)=(1) already exists.',
+      hint: null,
+      message: 'duplicate key value violates unique constraint',
+    };
+    const failFetch = jest.fn(async () => makeResponse(false, 409, postgrestBody));
+    const worker = new IngestWorker({
+      supabaseUrl: MOCK_SUPABASE_URL,
+      supabaseServiceRoleKey: MOCK_SERVICE_ROLE_KEY,
+      fetch: failFetch,
+    });
+
+    await expect(worker.supabaseRequest('transactions', { method: 'POST' })).rejects.toMatchObject({
+      name: 'SupabaseRequestError',
+      status: 409,
+      code: '23505',
+      details: 'Key (id)=(1) already exists.',
+      hint: null,
+      message: 'Supabase request failed with status 409',
+    });
+  });
+
+  test('reconcilePendingTransactions does not treat a Supabase error as Horizon 404', async () => {
+    const worker = new IngestWorker({
+      supabaseUrl: MOCK_SUPABASE_URL,
+      supabaseServiceRoleKey: MOCK_SERVICE_ROLE_KEY,
+      fetch: mockFetch,
+    });
+
+    // Horizon succeeds
+    worker.server.transactions = () => ({
+      transaction: (hash) => ({
+        call: async () => ({
+          id: hash,
+          successful: true,
+          created_at: '2026-08-28T00:01:00Z',
+        }),
+      }),
+    });
+
+    // Supabase PATCH throws SupabaseRequestError
+    const originalRequest = worker.supabaseRequest.bind(worker);
+    worker.supabaseRequest = async (path, options = {}) => {
+      if (options.method === 'PATCH') {
+        throw new SupabaseRequestError({
+          status: 404,
+          code: 'PGRST116',
+          details: 'The result contains 0 rows',
+          message: 'JSON object requested, multiple (or no) rows returned',
+        });
+      }
+      return originalRequest(path, options);
+    };
+
+    const initialReconciled = worker.reconciledCount;
+    await worker.reconcilePendingTransactions();
+    // Reconciled count does not increment because Supabase update failed
+    expect(worker.reconciledCount).toBe(initialReconciled);
   });
 
   test('BoundedLruMap bounds capacity and evicts least recently used items', () => {

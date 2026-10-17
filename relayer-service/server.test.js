@@ -1264,5 +1264,90 @@ describe('Multi-instance coordination and bounded memory state', () => {
     pruneActiveAddMoneyUserLocks();
     expect(Object.keys(activeAddMoneyUserLocks).length).toBeLessThanOrEqual(1000);
   });
+
+  describe('Issue #121: Typed PostgREST error handling and conflict detection', () => {
+    it('throws SupabaseRequestError with code 23505 and status 409 without putting raw body in message', async () => {
+      const postgrestConflict = {
+        code: '23505',
+        details: 'Key (key)=(test-key) already exists.',
+        hint: null,
+        message: 'duplicate key value violates unique constraint "relayer_idempotency_keys_pkey"',
+      };
+      const customFetch = jest.fn(async () => makeResponse(false, 409, postgrestConflict));
+      const mod = await loadServerModule({ __fetchMock: customFetch });
+
+      let thrown = null;
+      try {
+        await mod.testHooks.supabaseRestRequest('relayer_idempotency_keys', {
+          method: 'POST',
+          body: JSON.stringify({ key: 'test-key' }),
+        });
+      } catch (err) {
+        thrown = err;
+      }
+
+      expect(thrown).toBeDefined();
+      expect(thrown.name).toBe('SupabaseRequestError');
+      expect(thrown.status).toBe(409);
+      expect(thrown.code).toBe('23505');
+      expect(thrown.details).toBe('Key (key)=(test-key) already exists.');
+      expect(thrown.hint).toBeNull();
+      expect(thrown.message).toBe('Supabase request failed with status 409');
+      expect(thrown.message).not.toContain(JSON.stringify(postgrestConflict));
+    });
+
+    it('Branch 1: acquireAddMoneyUserLock handles PostgREST 409 unique constraint conflict', async () => {
+      const now = Date.now();
+      const customFetch = jest.fn(async (url, options) => {
+        const urlStr = String(url);
+        const method = options?.method || 'GET';
+        if (urlStr.includes('/rest/v1/relayer_idempotency_keys')) {
+          if (method === 'POST') {
+            return makeResponse(false, 409, {
+              code: '23505',
+              details: 'Key (key)=(add-money-user:user-conflict) already exists.',
+              hint: null,
+              message: 'duplicate key value violates unique constraint',
+            });
+          }
+          if (method === 'GET') {
+            // Unexpired lock
+            return makeResponse(true, 200, [{ expires_at: new Date(now + 60000).toISOString() }]);
+          }
+        }
+        return makeResponse(true, 200, []);
+      });
+
+      const mod = await loadServerModule({ __fetchMock: customFetch });
+      const result = await mod.testHooks.acquireAddMoneyUserLock('add-money-user:user-conflict', 60000);
+      expect(result).toEqual({ acquired: false });
+    });
+
+    it('Branch 2: acquireIdempotencyLock handles PostgREST 409 unique constraint conflict and returns cached response', async () => {
+      const cachedResponse = { hash: 'tx-123', status: 'success' };
+      const customFetch = jest.fn(async (url, options) => {
+        const urlStr = String(url);
+        const method = options?.method || 'GET';
+        if (urlStr.includes('/rest/v1/relayer_idempotency_keys')) {
+          if (method === 'POST') {
+            return makeResponse(false, 409, {
+              code: '23505',
+              details: 'Key (key)=(req-key) already exists.',
+              hint: null,
+              message: 'duplicate key value violates unique constraint',
+            });
+          }
+          if (method === 'GET') {
+            return makeResponse(true, 200, [{ response: cachedResponse }]);
+          }
+        }
+        return makeResponse(true, 200, []);
+      });
+
+      const mod = await loadServerModule({ __fetchMock: customFetch });
+      const result = await mod.testHooks.acquireIdempotencyLock('req-key', 60000);
+      expect(result).toEqual({ acquired: false, response: cachedResponse });
+    });
+  });
 });
 

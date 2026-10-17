@@ -2,6 +2,11 @@
 
 const crypto = require('crypto');
 const StellarSdk = require('@stellar/stellar-sdk');
+const {
+  SupabaseRequestError,
+  executeSupabaseRequest,
+  isPostgresUniqueViolation,
+} = require('./supabaseRest');
 
 const DEFAULT_CURSOR_KEY = 'horizon_payments_cursor';
 const DEFAULT_POLL_INTERVAL_MS = 5000;
@@ -648,9 +653,22 @@ class IngestWorker {
 
     for (const pending of pendingList) {
       if (!pending.tx_hash) continue;
+      let txRecord = null;
+      let notFoundOnChain = false;
       try {
         // Check if transaction exists on Horizon
-        const txRecord = await this.server.transactions().transaction(pending.tx_hash).call();
+        txRecord = await this.server.transactions().transaction(pending.tx_hash).call();
+      } catch (err) {
+        const status = err?.status || err?.response?.status;
+        if (!(err instanceof SupabaseRequestError) && status === 404) {
+          notFoundOnChain = true;
+        } else {
+          console.warn(`[IngestWorker] Error checking transaction ${pending.tx_hash} on Horizon:`, err.message);
+          continue;
+        }
+      }
+
+      try {
         if (txRecord && txRecord.successful) {
           // Transaction succeeded on chain: reconcile status
           await this.supabaseRequest(`transactions?id=eq.${pending.id}`, {
@@ -663,9 +681,7 @@ class IngestWorker {
             }),
           });
           this.reconciledCount++;
-        }
-      } catch (err) {
-        if (err.response && err.response.status === 404) {
+        } else if (notFoundOnChain) {
           // Timed out and not found on chain: mark failed
           await this.supabaseRequest(`transactions?id=eq.${pending.id}`, {
             method: 'PATCH',
@@ -678,6 +694,8 @@ class IngestWorker {
           });
           this.reconciledCount++;
         }
+      } catch (err) {
+        console.warn(`[IngestWorker] Reconciliation update failed for ${pending.id}:`, err.message);
       }
     }
   }
@@ -717,33 +735,21 @@ class IngestWorker {
   }
 
   async supabaseRequest(path, options = {}) {
-    const doFetch = this.customFetch || fetch;
-    if (typeof doFetch !== 'function') {
-      throw new Error('global fetch is unavailable');
-    }
-
-    const response = await doFetch(`${this.supabaseUrl}/rest/v1/${path}`, {
-      ...options,
-      headers: {
-        apikey: this.supabaseServiceRoleKey,
-        Authorization: `Bearer ${this.supabaseServiceRoleKey}`,
-        'Content-Type': 'application/json',
-        ...(options.headers || {}),
-      },
+    return executeSupabaseRequest({
+      baseUrl: this.supabaseUrl,
+      serviceRoleKey: this.supabaseServiceRoleKey,
+      path,
+      options,
+      fetchFn: this.customFetch || (typeof fetch === 'function' ? fetch : undefined),
     });
-
-    const text = await response.text();
-    if (!response.ok) {
-      throw new Error(text || `Supabase request failed with status ${response.status}`);
-    }
-
-    return text ? JSON.parse(text) : null;
   }
 }
 
 module.exports = {
   IngestWorker,
   BoundedLruMap,
+  SupabaseRequestError,
+  isPostgresUniqueViolation,
   DEFAULT_CURSOR_KEY,
   DEFAULT_POLL_INTERVAL_MS,
   DEFAULT_PENDING_TIMEOUT_MS,

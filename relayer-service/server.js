@@ -67,6 +67,12 @@ const distributionSigner = {
 };
 const usdcAsset = new StellarSdk.Asset(config.assetCode, config.assetIssuer);
 
+const {
+  SupabaseRequestError,
+  executeSupabaseRequest,
+  isPostgresUniqueViolation,
+} = require('./supabaseRest');
+
 const { IngestWorker } = require('./ingestWorker');
 const ingestWorker = new IngestWorker({
   horizonUrl: config.horizonUrl,
@@ -699,6 +705,7 @@ module.exports = {
   startupPromise,
   ingestWorker,
   keyManager,
+  SupabaseRequestError,
   ...(process.env.NODE_ENV === 'test' ? {
     testHooks: Object.freeze({
       keyManager,
@@ -711,6 +718,8 @@ module.exports = {
       reserveAddMoneyClaim,
       settleAddMoneyClaim,
       supabaseRestRequest,
+      SupabaseRequestError,
+      isPostgresUniqueViolation,
       checkPaymentLimits,
       getPaymentLimitsStatus,
       recordPaymentRecord,
@@ -1615,10 +1624,6 @@ function createAddMoneyPersistenceError(cause, operation) {
   return error;
 }
 
-function isPostgresUniqueViolation(error) {
-  return error?.code === '23505' || error?.body?.code === '23505';
-}
-
 function isSupabasePersistenceEnabled() {
   return Boolean(config.supabaseUrl && config.supabaseServiceRoleKey);
 }
@@ -1865,46 +1870,13 @@ async function assertWalletBindingsReachable() {
 }
 
 async function supabaseRestRequest(path, options = {}) {
-  if (typeof fetch !== 'function') {
-    throw new Error('global fetch is unavailable in this Node runtime');
-  }
-
-  const baseUrl = config.supabaseUrl.replace(/\/$/, '');
-  const response = await fetch(`${baseUrl}/rest/v1/${path}`, {
-    ...options,
-    headers: {
-      apikey: config.supabaseServiceRoleKey,
-      Authorization: `Bearer ${config.supabaseServiceRoleKey}`,
-      'Content-Type': 'application/json',
-      ...(options.headers || {}),
-    },
+  return executeSupabaseRequest({
+    baseUrl: config.supabaseUrl,
+    serviceRoleKey: config.supabaseServiceRoleKey,
+    path,
+    options,
+    fetchFn: typeof fetch === 'function' ? fetch : undefined,
   });
-  const text = await response.text();
-  let body = null;
-  if (text) {
-    try {
-      body = JSON.parse(text);
-    } catch {
-      body = null;
-    }
-  }
-
-  if (!response.ok) {
-    const error = new Error(body?.message || text || `Supabase request failed with status ${response.status}`);
-    error.status = response.status;
-    error.body = body;
-    error.code = body?.code;
-    error.response = { status: response.status, data: body };
-    throw error;
-  }
-
-  if (!text) {
-    return null;
-  }
-  if (body === null) {
-    throw new Error('Supabase returned a non-JSON response');
-  }
-  return body;
 }
 
 function delay(ms) {
