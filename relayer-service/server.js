@@ -674,6 +674,16 @@ let relayerHttpServer = null;
 async function startRelayer() {
   if (config.authRequired) {
     await assertWalletBindingsReachable();
+
+    // Fail closed rather than silently skipping issuer enforcement. If auth is
+    // required but no issuer can be derived, the deployment would accept tokens
+    // from any issuer, which is the gap this change exists to close.
+    if (!config.supabaseJwtIssuer) {
+      throw new Error(
+        'RELAYER_AUTH_REQUIRED is enabled but no JWT issuer could be derived. ' +
+          'Set SUPABASE_URL or SUPABASE_JWT_ISSUER explicitly.'
+      );
+    }
   }
 
   relayerHttpServer = await new Promise((resolve, reject) => {
@@ -1140,12 +1150,41 @@ async function verifySupabaseJwt(authorizationHeader) {
 
   const claims = JSON.parse(base64UrlDecode(encodedPayload).toString('utf8'));
   const nowSeconds = Math.floor(Date.now() / 1000);
-  if (!claims.sub || (claims.exp && claims.exp <= nowSeconds)) {
+
+  // exp is mandatory. Treating it as optional let an undated token be replayed
+  // forever, which is the same exposure as an expired one.
+  if (!claims.sub) {
+    throw new Error('Invalid authentication token');
+  }
+  if (typeof claims.exp !== 'number' || !Number.isFinite(claims.exp)) {
+    throw new Error('Authentication token is missing an expiry');
+  }
+  if (claims.exp <= nowSeconds) {
     throw new Error('Expired authentication token');
   }
 
   if (claims.role && claims.role !== 'authenticated') {
     throw new Error('Authenticated user token required');
+  }
+
+  // aud and iss are enforced by default rather than only when configured, so a
+  // token minted for a different audience or by a different issuer is rejected
+  // even on a deployment that never set the env vars.
+  const expectedAudience = config.supabaseJwtAudience;
+  if (expectedAudience) {
+    const allowed = expectedAudience
+      .split(',')
+      .map((v) => v.trim())
+      .filter(Boolean);
+    const tokenAudiences = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
+    if (!tokenAudiences.some((a) => allowed.includes(a))) {
+      throw new Error('Authentication token audience is not accepted');
+    }
+  }
+
+  const expectedIssuer = config.supabaseJwtIssuer;
+  if (expectedIssuer && claims.iss !== expectedIssuer) {
+    throw new Error('Authentication token issuer is not accepted');
   }
 
   return claims;
@@ -2109,6 +2148,7 @@ module.exports = {
       isPostgresUniqueViolation,
       checkPaymentLimits,
       getPaymentLimitsStatus,
+      verifySupabaseJwt,
       recordPaymentRecord,
       inMemoryPaymentRecords,
       shouldSendLowBalanceAlert,

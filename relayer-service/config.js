@@ -106,6 +106,14 @@ function loadConfig(env = process.env) {
     authRequired,
     adminToken: optionalString(env.RELAYER_ADMIN_TOKEN) || '',
     supabaseJwtSecret: optionalString(env.SUPABASE_JWT_SECRET) || '',
+    // Claim enforcement. aud defaults to the Supabase 'authenticated' role and
+    // iss is derived from SUPABASE_URL, so both are checked without extra
+    // configuration. Both accept an explicit override; aud also accepts a
+    // comma-separated list per RFC 7519.
+    supabaseJwtAudience: optionalString(env.SUPABASE_JWT_AUDIENCE) || 'authenticated',
+    supabaseJwtIssuer:
+      optionalString(env.SUPABASE_JWT_ISSUER) ||
+      (supabaseUrl ? `${supabaseUrl.replace(/\/$/, '')}/auth/v1` : ''),
     supabaseUrl,
     supabaseServiceRoleKey,
     addMoneyEnabled: networkName === 'testnet' && readBoolean(env, 'ENABLE_TESTNET_FAUCET', false),
