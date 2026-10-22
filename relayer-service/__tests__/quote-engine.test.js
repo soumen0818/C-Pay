@@ -8,6 +8,7 @@ describe('remittance quote engine', () => {
   test('calculates fee, spread-adjusted FX, recipient amount, and expiry', async () => {
     const engine = createQuoteEngine({
       rateProvider: { getRate: async () => '90.12345678' },
+      signingSecret: 'test-quote-signing-secret',
       feeBps: 175,
       spreadBps: 50,
       ttlSeconds: 60,
@@ -35,6 +36,7 @@ describe('remittance quote engine', () => {
     let clock = now;
     const engine = createQuoteEngine({
       rateProvider: { getRate: async () => 90 },
+      signingSecret: 'test-quote-signing-secret',
       ttlSeconds: 10,
       now: () => clock,
     });
@@ -48,6 +50,7 @@ describe('remittance quote engine', () => {
   test('does not silently fall back when the provider has no rate', async () => {
     const engine = createQuoteEngine({
       rateProvider: { getRate: async () => { throw new Error('provider unavailable'); } },
+      signingSecret: 'test-quote-signing-secret',
     });
     await expect(engine.createQuote({ sendAmount: '10', sendCurrency: 'USD', receiveCurrency: 'INR' }))
       .rejects.toThrow('provider unavailable');

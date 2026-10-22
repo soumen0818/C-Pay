@@ -28,6 +28,7 @@ const quoteEngine = createQuoteEngine({
   },
   feeBps: config.quoteFeeBps,
   spreadBps: config.quoteSpreadBps,
+  signingSecret: config.quoteSignatureSecret,
   ttlSeconds: config.quoteTtlSeconds,
 });
 const server = new StellarSdk.Horizon.Server(config.horizonUrl, {
@@ -122,10 +123,13 @@ app.get('/health', (_req, res) => {
 
 app.post('/quotes', requireAuthenticatedUser, async (req, res) => {
   try {
+    // The quote is bound to the requesting account at mint time so it cannot be
+    // replayed by a different caller.
     const quote = await quoteEngine.createQuote({
       sendAmount: req.body.sendAmount,
       sendCurrency: req.body.sendCurrency,
       receiveCurrency: req.body.receiveCurrency,
+      ownerId: req.auth && req.auth.sub,
     });
     res.status(201).json(quote);
   } catch (error) {
@@ -136,8 +140,11 @@ app.post('/quotes', requireAuthenticatedUser, async (req, res) => {
 
 app.post('/quotes/validate', requireAuthenticatedUser, (req, res) => {
   try {
-    res.json(quoteEngine.assertFresh(req.body));
+    const quote = quoteEngine.assertFreshForOwner(req.body, req.auth && req.auth.sub);
+    res.json(quote);
   } catch (error) {
+    // Distinct codes so the client can tell "expired, fetch a new quote" from
+    // "this quote was not issued by the relayer or was issued to someone else".
     res.status(410).json({ error: error.message, code: error.code || 'QUOTE_EXPIRED' });
   }
 });
