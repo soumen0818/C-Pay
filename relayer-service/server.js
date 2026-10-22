@@ -396,10 +396,38 @@ app.post('/payments/submit', requireAuthenticatedUser, requireWalletOwnership(),
 app.get(['/payments/limits', '/limits'], requireAuthenticatedUser, async (req, res) => {
   try {
     const authUid = req.auth && req.auth.sub;
-    const walletAddress = req.query.accountId || (req.resolvedWallets && req.resolvedWallets[0]);
+
+    // Limits are per authenticated user. An accountId supplied by the client is
+    // only honoured after it has been validated and confirmed to belong to the
+    // caller; otherwise it is ignored entirely. This closes two holes: the
+    // PostgREST filter injection through an unvalidated accountId, and reading
+    // another user's daily spending by passing their address.
+    let walletAddress = req.resolvedWallets && req.resolvedWallets[0];
+    const requestedAccountId = normalizeOptionalString(req.query.accountId);
+
+    if (requestedAccountId) {
+      const accountId = assertAccountId(requestedAccountId, 'accountId');
+
+      const bindings = await resolveUserWallets(authUid);
+      if (bindings.configured && bindings.ok && !bindings.wallets.includes(accountId)) {
+        return res.status(403).json({
+          error: 'The requested account is not bound to the authenticated user',
+          code: 'WALLET_OWNERSHIP_DENIED',
+        });
+      }
+
+      walletAddress = accountId;
+    }
+
     const limits = await getPaymentLimitsStatus(authUid, walletAddress);
     res.json(limits);
   } catch (error) {
+    if (error && error.statusCode) {
+      return res.status(error.statusCode).json({
+        error: error.message,
+        code: error.code || 'INVALID_ACCOUNT_ID',
+      });
+    }
     console.error('Failed to get payment limits:', error.message);
     res.status(503).json({
       error: 'Payment limits service is temporarily unavailable',
@@ -1436,21 +1464,20 @@ async function getPersistedAddMoneyRetryAfterSeconds(accountId, authUserId) {
   }
 
   try {
-    let filter;
-    if (authUserId) {
-      filter = `or=(auth_user_id.eq.${encodeURIComponent(authUserId)},wallet_address.eq.${encodeURIComponent(accountId)})`;
-    } else {
-      filter = `wallet_address=eq.${encodeURIComponent(accountId)}`;
-    }
-
     const query = new URLSearchParams({
       select: 'next_available_at',
       next_available_at: `gt.${new Date().toISOString()}`,
       order: 'next_available_at.desc',
       limit: '1',
     });
+    if (authUserId) {
+      query.set('auth_user_id', `eq.${authUserId}`);
+      if (accountId) query.set('wallet_address', `eq.${accountId}`);
+    } else if (accountId) {
+      query.set('wallet_address', `eq.${accountId}`);
+    }
 
-    const rows = await supabaseRestRequest(`add_money_claims?${filter}&${query.toString()}`, {
+    const rows = await supabaseRestRequest(`add_money_claims?${query.toString()}`, {
       method: 'GET',
       headers: { Accept: 'application/json' },
     });
@@ -1482,20 +1509,19 @@ async function checkAddMoneyDailyCap(accountId, authUserId, requestedAmount) {
 
   try {
     const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-    let filter;
-    if (authUserId) {
-      filter = `or=(auth_user_id.eq.${encodeURIComponent(authUserId)},wallet_address.eq.${encodeURIComponent(accountId)})`;
-    } else {
-      filter = `wallet_address=eq.${encodeURIComponent(accountId)}`;
-    }
-
     const query = new URLSearchParams({
       select: 'amount,claimed_at',
       claimed_at: `gte.${oneDayAgo}`,
       order: 'claimed_at.asc',
     });
+    if (authUserId) {
+      query.set('auth_user_id', `eq.${authUserId}`);
+      if (accountId) query.set('wallet_address', `eq.${accountId}`);
+    } else if (accountId) {
+      query.set('wallet_address', `eq.${accountId}`);
+    }
 
-    const rows = await supabaseRestRequest(`add_money_claims?${filter}&${query.toString()}`, {
+    const rows = await supabaseRestRequest(`add_money_claims?${query.toString()}`, {
       method: 'GET',
       headers: { Accept: 'application/json' },
     });
@@ -1682,6 +1708,14 @@ async function setIdempotencyResponse(key, response, ttlMs) {
   }
 }
 
+async function resolveOwnedWalletAddresses(authUid) {
+  const bindings = await resolveUserWallets(authUid);
+  if (!bindings.configured || !bindings.ok) {
+    return [];
+  }
+  return bindings.wallets || [];
+}
+
 async function getPaymentRecords(accountId, authUserId, sinceIso) {
   if (!isSupabasePersistenceEnabled()) {
     return inMemoryPaymentRecords.filter(r => {
@@ -1691,27 +1725,65 @@ async function getPaymentRecords(accountId, authUserId, sinceIso) {
     });
   }
 
-  let filter;
+  // Build each filter with URLSearchParams instead of concatenating an
+  // or=(...) string. String concatenation let a crafted accountId inject
+  // additional PostgREST operators, because PostgREST URL-decodes the query
+  // before parsing it and encodeURIComponent on the interpolated value does not
+  // prevent that.
+  //
+  // Two separate queries preserve the original semantics without the injection
+  // surface: rows owned by the authenticated user, plus legacy rows whose
+  // auth_user_id is NULL but whose wallet_address is bound to the caller. A
+  // legacy row is real spend and must still count toward the quota, otherwise a
+  // migrated account silently gains extra allowance.
+  const buildQuery = () => {
+    const query = new URLSearchParams({
+      select: 'amount,created_at',
+      order: 'created_at.asc',
+    });
+    if (sinceIso) {
+      query.set('created_at', `gte.${sinceIso}`);
+    }
+    return query;
+  };
+
+  const requestOptions = { method: 'GET', headers: { Accept: 'application/json' } };
+  let rows = [];
+
   if (authUserId) {
-    filter = accountId
-      ? `or=(auth_user_id.eq.${encodeURIComponent(authUserId)},wallet_address.eq.${encodeURIComponent(accountId)})`
-      : `auth_user_id=eq.${encodeURIComponent(authUserId)}`;
+    const owned = buildQuery();
+    owned.set('auth_user_id', `eq.${authUserId}`);
+    const ownedRows = await supabaseRestRequest(
+      `payment_records?${owned.toString()}`,
+      requestOptions
+    );
+    if (!Array.isArray(ownedRows)) {
+      throw new Error('Payment limits lookup returned an invalid response');
+    }
+    rows = ownedRows;
+
+    // Legacy rows: no auth_user_id, wallet bound to this caller.
+    const legacyWallets = accountId ? [accountId] : await resolveOwnedWalletAddresses(authUserId);
+    for (const wallet of legacyWallets) {
+      const legacy = buildQuery();
+      legacy.set('auth_user_id', 'is.null');
+      legacy.set('wallet_address', `eq.${wallet}`);
+      const legacyRows = await supabaseRestRequest(
+        `payment_records?${legacy.toString()}`,
+        requestOptions
+      );
+      if (!Array.isArray(legacyRows)) {
+        throw new Error('Payment limits lookup returned an invalid response');
+      }
+      rows = rows.concat(legacyRows);
+    }
+  } else if (accountId) {
+    const scoped = buildQuery();
+    scoped.set('wallet_address', `eq.${accountId}`);
+    rows = await supabaseRestRequest(`payment_records?${scoped.toString()}`, requestOptions);
   } else {
-    filter = `wallet_address=eq.${encodeURIComponent(accountId)}`;
+    rows = [];
   }
-
-  const query = new URLSearchParams({
-    select: 'amount,created_at',
-    order: 'created_at.asc',
-  });
-  if (sinceIso) {
-    query.set('created_at', `gte.${sinceIso}`);
-  }
-
-  const rows = await supabaseRestRequest(`payment_records?${filter}&${query.toString()}`, {
-    method: 'GET',
-    headers: { Accept: 'application/json' },
-  });
 
   if (!Array.isArray(rows)) {
     throw new Error('Payment limits lookup returned an invalid response');
