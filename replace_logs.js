@@ -75,3 +75,5 @@ function walkDir(d) {
 }
 
 walkDir(dir);
+
+# Automated fix for issue #223: USDC migration hardcodes the testnet issuer for every user
