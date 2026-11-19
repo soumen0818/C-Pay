@@ -1662,4 +1662,105 @@ describe('Multi-instance coordination and bounded memory state', () => {
       expect(result).toEqual({ acquired: false, response: cachedResponse });
     });
   });
+
+  describe('Issue #178: Low-balance alert deduplication and fetch timeouts', () => {
+    it('sends only one alert for 10 account prepares while sponsor balance is low', async () => {
+      const alertCalls = [];
+      const customFetch = jest.fn(async (url, options) => {
+        const urlStr = String(url);
+        if (urlStr.includes('alerts.example.test')) {
+          alertCalls.push({ url: urlStr, options });
+          return makeResponse(true, 200, {});
+        }
+        return buildFetchMock({ userWallets: { [USER_A]: [WALLET_A] } })(url, options);
+      });
+
+      const mod = await loadServerModule({
+        ALERT_WEBHOOK_URL: 'https://alerts.example.test',
+        __fetchMock: customFetch,
+      });
+
+      // Mock Horizon loadAccount returning a low sponsor balance (e.g. 1 XLM < threshold 5)
+      jest.spyOn(mod.testHooks.stellarServer, 'loadAccount').mockResolvedValue({
+        sequence: '100',
+        balances: [
+          { asset_type: 'native', balance: '1' },
+          { asset_code: 'USDC', asset_issuer: 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5', balance: '1000' },
+        ],
+      });
+
+      // Perform 10 prepares while low
+      for (let i = 0; i < 10; i++) {
+        await postJson(
+          mod.app,
+          '/accounts/prepare',
+          { accountId: WALLET_A },
+          { Authorization: makeBearerToken(USER_A) }
+        );
+      }
+
+      // Exactly 1 alert should have been dispatched to the webhook
+      expect(alertCalls).toHaveLength(1);
+      expect(JSON.parse(alertCalls[0].options.body)).toMatchObject({
+        service: 'cpay-stellar-relayer',
+        warnings: expect.arrayContaining([expect.stringContaining('Sponsor XLM balance is 1')]),
+      });
+      // The outbound fetch to the webhook must carry an AbortSignal timeout
+      expect(alertCalls[0].options.signal).toBeDefined();
+    });
+
+    it('enforces separate cooldowns per condition (sponsor vs distribution)', async () => {
+      const alertCalls = [];
+      const customFetch = jest.fn(async (url, options) => {
+        const urlStr = String(url);
+        if (urlStr.includes('alerts.example.test')) {
+          alertCalls.push({ url: urlStr, options });
+          return makeResponse(true, 200, {});
+        }
+        return buildFetchMock()(url, options);
+      });
+
+      const mod = await loadServerModule({
+        ALERT_WEBHOOK_URL: 'https://alerts.example.test',
+        __fetchMock: customFetch,
+      });
+
+      // Condition 1: sponsor balance
+      const sponsorAlert1 = await mod.testHooks.shouldSendLowBalanceAlert('sponsor_balance');
+      expect(sponsorAlert1).toBe(true);
+      const sponsorAlert2 = await mod.testHooks.shouldSendLowBalanceAlert('sponsor_balance');
+      expect(sponsorAlert2).toBe(false);
+
+      // Condition 2: distribution balance should not be blocked by sponsor balance cooldown
+      const distAlert1 = await mod.testHooks.shouldSendLowBalanceAlert('distribution_balance');
+      expect(distAlert1).toBe(true);
+      const distAlert2 = await mod.testHooks.shouldSendLowBalanceAlert('distribution_balance');
+      expect(distAlert2).toBe(false);
+    });
+
+    it('passes an AbortSignal timeout on Supabase Auth API calls', async () => {
+      let authCallSignal = null;
+      const customFetch = jest.fn(async (url, options) => {
+        const urlStr = String(url);
+        if (urlStr.includes('/auth/v1/user')) {
+          authCallSignal = options?.signal;
+          return makeResponse(true, 200, { id: 'test-user', role: 'authenticated', aud: 'authenticated' });
+        }
+        return buildFetchMock()(url, options);
+      });
+
+      const mod = await loadServerModule({
+        RELAYER_AUTH_REQUIRED: 'true',
+        SUPABASE_URL: 'http://localhost:9999/supabase',
+        SUPABASE_SERVICE_ROLE_KEY: 'test-service-role-key',
+        __fetchMock: customFetch,
+      });
+
+      await getJson(mod.app, '/account/' + WALLET_A + '/status', {
+        Authorization: makeBearerToken('test-user'),
+      });
+
+      expect(authCallSignal).toBeDefined();
+    });
+  });
 });

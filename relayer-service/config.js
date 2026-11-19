@@ -99,6 +99,8 @@ function loadConfig(env = process.env) {
     lowAssetThreshold: readNumber(env, 'LOW_USDC_THRESHOLD', 100, { min: 0 }),
     lowBalanceCheckIntervalMs: readNumber(env, 'LOW_BALANCE_CHECK_INTERVAL_MS', 5 * 60 * 1000, { integer: true, min: 0, exclusiveMin: true }),
     lowBalanceAlertWindowMs: readNumber(env, 'LOW_BALANCE_ALERT_WINDOW_MS', 60 * 60 * 1000, { integer: true, min: 0, exclusiveMin: true }),
+    outboundFetchTimeoutMs: readNumber(env, 'OUTBOUND_FETCH_TIMEOUT_MS', 5000, { integer: true, min: 0, exclusiveMin: true }),
+    alertWebhookUrl: optionalString(env.ALERT_WEBHOOK_URL) || null,
     rateLimitWindowMs: readNumber(env, 'RATE_LIMIT_WINDOW_MS', 60000, { integer: true, min: 0, exclusiveMin: true }),
     rateLimitMaxRequests: readNumber(env, 'RATE_LIMIT_MAX_REQUESTS', 100, { integer: true, min: 0, exclusiveMin: true }),
     txRateLimitWindowMs: readNumber(env, 'TX_RATE_LIMIT_WINDOW_MS', 60000, { integer: true, min: 0, exclusiveMin: true }),
