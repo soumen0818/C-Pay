@@ -16,6 +16,7 @@ Every privilege statement that the retired `App/supabase_schema.sql` issued, che
 | `resolve_cpay_id(TEXT)` | `:442` → authenticated (anon via default) | Redefined users-only; **anon still allowed** | authenticated only. Users-only body re-asserted, because the schema-file body also returned merchant rows. |
 | `get_public_wallet_profile(TEXT)` | `:441` → authenticated (anon via default) | **anon could map wallet → C-Pay ID / name** | authenticated only |
 | `current_wallet_address()` | `:445` → authenticated (anon via default) | anon allowed | authenticated only |
+| `delete_my_account()` | n/a (added by `20261120000004`) | Added | authenticated only (#228) |
 | `set_row_auth_user_id()`, `update_updated_at_column()` | none | Trigger functions; cannot be called via RPC | Unchanged (excluded from the RPC audit) |
 
 ## Tables

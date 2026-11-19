@@ -39,6 +39,8 @@ const CONTENT: Record<InfoDoc, { title: string; blocks: Block[] }> = {
       { type: 'paragraph', text: 'Your PIN and private keys never leave your device unencrypted. C-Pay cannot read or recover your PIN or secret key. Cloud backups are encrypted with a recovery password only you know.' },
       { type: 'heading', text: 'Payments' },
       { type: 'paragraph', text: 'Pilot payments are recorded on the Stellar testnet, which is public. Transaction amounts, addresses, and timestamps are visible on-chain.' },
+      { type: 'heading', text: 'Account deletion' },
+      { type: 'paragraph', text: 'You can delete your account at any time from your Profile screen. Deleting your account permanently deletes your profile, C-Pay ID, verified email, and encrypted cloud backups from our servers, unlinking all server associations immediately.' },
       { type: 'heading', text: 'Contact' },
       { type: 'paragraph', text: `For privacy questions, email ${SUPPORT_EMAIL}.` },
     ],

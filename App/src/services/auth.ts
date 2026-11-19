@@ -335,6 +335,25 @@ export async function signOut(): Promise<void> {
   clearSessionPin();
 }
 
+/**
+ * Permanently delete current user account via delete_my_account RPC and wipe local data (#228)
+ */
+export async function deleteAccount(): Promise<void> {
+  const { error } = await supabase.rpc('delete_my_account');
+  if (error) {
+    Logger.error('Failed to execute delete_my_account RPC:', error);
+    throw error;
+  }
+  await signOut();
+  await AsyncStorage.multiRemove([
+    'wallet_address',
+    'wallet_auth_user_id',
+    'wallet_pin',
+    'biometric_enabled',
+    'has_wallet',
+  ]);
+}
+
 // Note on session swapping (issue #2 / #32):
 //
 // Calling supabase.auth.signInWithOtp / verifyOtp while a session already exists
