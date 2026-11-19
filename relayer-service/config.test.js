@@ -67,7 +67,7 @@ describe('loadConfig', () => {
     })).toThrow('SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required');
   });
 
-  it('sets secure JWT and JWKS configuration defaults', () => {
+  it('defaults quotesEnabled to false and allows explicit override', () => {
     const config = loadConfig({
       ...validEnv,
       NODE_ENV: 'test',
@@ -76,30 +76,20 @@ describe('loadConfig', () => {
       SUPABASE_URL: 'https://project.supabase.co',
       SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
     });
+    expect(config.quotesEnabled).toBe(false);
+    expect(config.quoteSignatureSecret).toBe('');
 
-    expect(config.supabaseJwtAudience).toBe('authenticated');
-    expect(config.supabaseJwtIssuer).toBe('https://project.supabase.co/auth/v1');
-    expect(config.supabaseJwksUrl).toBe('https://project.supabase.co/auth/v1/.well-known/jwks.json');
-    expect(config.supabaseAuthFallbackToApi).toBe(false);
-  });
-
-  it('allows explicit overrides for JWT audience, issuer, JWKS URL and API fallback', () => {
-    const config = loadConfig({
+    const enabledConfig = loadConfig({
       ...validEnv,
       NODE_ENV: 'test',
       RELAYER_AUTH_REQUIRED: 'true',
       CORS_ORIGIN: 'https://app.example.com',
       SUPABASE_URL: 'https://project.supabase.co',
       SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
-      SUPABASE_JWT_AUDIENCE: 'custom-aud',
-      SUPABASE_JWT_ISSUER: 'https://auth.custom.com',
-      SUPABASE_JWKS_URL: 'https://auth.custom.com/.well-known/jwks.json',
-      SUPABASE_AUTH_FALLBACK_TO_API: 'true',
+      ENABLE_QUOTES_API: 'true',
+      QUOTE_SIGNATURE_SECRET: 'test-secret',
     });
-
-    expect(config.supabaseJwtAudience).toBe('custom-aud');
-    expect(config.supabaseJwtIssuer).toBe('https://auth.custom.com');
-    expect(config.supabaseJwksUrl).toBe('https://auth.custom.com/.well-known/jwks.json');
-    expect(config.supabaseAuthFallbackToApi).toBe(true);
+    expect(enabledConfig.quotesEnabled).toBe(true);
+    expect(enabledConfig.quoteSignatureSecret).toBe('test-secret');
   });
 });

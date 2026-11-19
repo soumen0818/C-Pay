@@ -126,6 +126,8 @@ function loadConfig(env = process.env) {
     quoteFeeBps: readNumber(env, 'QUOTE_FEE_BPS', 175, { integer: true, min: 0, max: 10000 }),
     quoteSpreadBps: readNumber(env, 'QUOTE_SPREAD_BPS', 0, { integer: true, min: 0, max: 10000 }),
     quoteTtlSeconds: readNumber(env, 'QUOTE_TTL_SECONDS', 60, { integer: true, min: 0, exclusiveMin: true }),
+    quoteSignatureSecret: optionalString(env.QUOTE_SIGNATURE_SECRET) || '',
+    quotesEnabled: readBoolean(env, 'ENABLE_QUOTES_API', false),
   };
 }
 
@@ -228,6 +230,7 @@ function getPublicConfig(config) {
     maxPaymentDailyAmount: config.maxPaymentDailyAmount,
     maxPaymentDailyCount: config.maxPaymentDailyCount,
     maxPaymentVelocityPerMinute: config.maxPaymentVelocityPerMinute,
+    quotesEnabled: config.quotesEnabled,
   };
 }
 
