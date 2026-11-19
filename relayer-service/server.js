@@ -28,6 +28,7 @@ const quoteEngine = createQuoteEngine({
   },
   feeBps: config.quoteFeeBps,
   spreadBps: config.quoteSpreadBps,
+  signingSecret: config.quoteSignatureSecret,
   ttlSeconds: config.quoteTtlSeconds,
 });
 const server = new StellarSdk.Horizon.Server(config.horizonUrl, {
@@ -92,6 +93,37 @@ const MAX_PREPARED_ACCOUNT_TRANSACTIONS = 10000;
 const preparedAccountTransactions = Object.create(null);
 const inMemoryPaymentRecords = [];
 
+/**
+ * Short-TTL cache for verified Supabase JWT tokens.
+ * Keyed by SHA-256 hash of the bearer token string.
+ */
+const MAX_VERIFIED_TOKEN_CACHE = 10000;
+const verifiedTokenCache = Object.create(null);
+
+function pruneVerifiedTokenCache(now = Date.now()) {
+  for (const [key, entry] of Object.entries(verifiedTokenCache)) {
+    if (entry.expiresAt <= now) {
+      delete verifiedTokenCache[key];
+    }
+  }
+
+  const keys = Object.keys(verifiedTokenCache);
+  if (keys.length > MAX_VERIFIED_TOKEN_CACHE) {
+    const excess = keys.length - MAX_VERIFIED_TOKEN_CACHE;
+    for (let i = 0; i < excess; i++) {
+      delete verifiedTokenCache[keys[i]];
+    }
+  }
+}
+
+/**
+ * In-memory cache for Supabase project JWKS public keys.
+ */
+let jwksCache = {
+  keys: [],
+  expiresAt: 0,
+};
+
 app.use(helmet());
 app.use(cors({ origin: config.corsOrigin }));
 app.use(express.json({ limit: '64kb' }));
@@ -122,12 +154,23 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok' });
 });
 
-app.post('/quotes', requireAuthenticatedUser, async (req, res) => {
+function requireQuotesEnabled(_req, res, next) {
+  if (!config.quotesEnabled) {
+    return res.status(503).json({
+      error: 'Quotes API is feature-flagged and disabled until a partner integration exists',
+      code: 'QUOTES_DISABLED',
+    });
+  }
+  return next();
+}
+
+app.post('/quotes', requireQuotesEnabled, requireAuthenticatedUser, async (req, res) => {
   try {
     const quote = await quoteEngine.createQuote({
       sendAmount: req.body.sendAmount,
       sendCurrency: req.body.sendCurrency,
       receiveCurrency: req.body.receiveCurrency,
+      ownerId: req.auth && req.auth.sub,
     });
     res.status(201).json(quote);
   } catch (error) {
@@ -136,11 +179,17 @@ app.post('/quotes', requireAuthenticatedUser, async (req, res) => {
   }
 });
 
-app.post('/quotes/validate', requireAuthenticatedUser, (req, res) => {
+app.post('/quotes/validate', requireQuotesEnabled, requireAuthenticatedUser, (req, res) => {
   try {
-    res.json(quoteEngine.assertFresh(req.body));
+    const quote = quoteEngine.assertFreshForOwner(req.body, req.auth && req.auth.sub);
+    res.json(quote);
   } catch (error) {
-    res.status(410).json({ error: error.message, code: error.code || 'QUOTE_EXPIRED' });
+    let status = 410;
+    if (error.code === 'QUOTE_SIGNING_NOT_CONFIGURED') status = 503;
+    else if (error.code === 'QUOTE_OWNER_MISMATCH') status = 403;
+    else if (error.code === 'QUOTE_SIGNATURE_MISMATCH') status = 400;
+    else if (error.code === 'QUOTE_EXPIRED') status = 410;
+    res.status(status).json({ error: error.message, code: error.code || 'QUOTE_EXPIRED' });
   }
 });
 
@@ -676,6 +725,16 @@ let relayerHttpServer = null;
 async function startRelayer() {
   if (config.authRequired) {
     await assertWalletBindingsReachable();
+
+    // Fail closed rather than silently skipping issuer enforcement. If auth is
+    // required but no issuer can be derived, the deployment would accept tokens
+    // from any issuer, which is the gap this change exists to close.
+    if (!config.supabaseJwtIssuer) {
+      throw new Error(
+        'RELAYER_AUTH_REQUIRED is enabled but no JWT issuer could be derived. ' +
+          'Set SUPABASE_URL or SUPABASE_JWT_ISSUER explicitly.'
+      );
+    }
   }
 
   relayerHttpServer = await new Promise((resolve, reject) => {
@@ -1109,47 +1168,220 @@ function rejectUnauthenticatedPublicSponsorship(req, res, next) {
   return next();
 }
 
+async function getSupabasePublicKey(kid, alg) {
+  if (!config.supabaseJwksUrl) return null;
+
+  const now = Date.now();
+  const hasMatchingKey = jwksCache.keys.some(k => (kid ? k.kid === kid : (!alg || k.alg === alg)));
+
+  if (now > jwksCache.expiresAt || (kid && !hasMatchingKey)) {
+    try {
+      const response = await fetch(config.supabaseJwksUrl, {
+        headers: config.supabaseServiceRoleKey ? { apikey: config.supabaseServiceRoleKey } : {},
+      });
+      if (response.ok) {
+        const body = await response.json();
+        if (body && Array.isArray(body.keys)) {
+          jwksCache = {
+            keys: body.keys,
+            expiresAt: now + (config.jwksCacheTtlMs || 10 * 60 * 1000),
+          };
+        }
+      }
+    } catch (_) {
+      // Failed to refresh JWKS; try cached keys if present
+    }
+  }
+
+  let matchingJwk = null;
+  if (kid) {
+    matchingJwk = jwksCache.keys.find(k => k.kid === kid);
+  }
+  if (!matchingJwk && alg) {
+    matchingJwk = jwksCache.keys.find(k => k.alg === alg);
+  }
+  if (!matchingJwk && jwksCache.keys.length === 1) {
+    matchingJwk = jwksCache.keys[0];
+  }
+  if (!matchingJwk) {
+    return null;
+  }
+
+  try {
+    return crypto.createPublicKey({ key: matchingJwk, format: 'jwk' });
+  } catch (_) {
+    return null;
+  }
+}
+
 async function verifySupabaseJwt(authorizationHeader) {
-  const match = authorizationHeader.match(/^Bearer\s+(.+)$/i);
+  const match = (authorizationHeader || '').match(/^Bearer\s+(.+)$/i);
   if (!match) {
     throw new Error('Authentication required');
   }
 
-  const token = match[1];
-  const [encodedHeader, encodedPayload, encodedSignature] = token.split('.');
+  const token = match[1].trim();
+  if (!token) {
+    throw new Error('Authentication required');
+  }
+
+  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+  pruneVerifiedTokenCache();
+  const cached = verifiedTokenCache[tokenHash];
+  const nowMs = Date.now();
+  if (cached && cached.expiresAt > nowMs) {
+    return cached.claims;
+  }
+
+  const parts = token.split('.');
+  if (parts.length !== 3) {
+    throw new Error('Invalid authentication token');
+  }
+
+  const [encodedHeader, encodedPayload, encodedSignature] = parts;
   if (!encodedHeader || !encodedPayload || !encodedSignature) {
     throw new Error('Invalid authentication token');
   }
 
-  const header = JSON.parse(base64UrlDecode(encodedHeader).toString('utf8'));
-  if (header.alg !== 'HS256' || !config.supabaseJwtSecret) {
-    return verifySupabaseTokenWithAuthApi(token);
-  }
-
-  const signedPayload = `${encodedHeader}.${encodedPayload}`;
-  const expectedSignature = crypto
-    .createHmac('sha256', config.supabaseJwtSecret)
-    .update(signedPayload)
-    .digest();
-  const actualSignature = base64UrlDecode(encodedSignature);
-
-  if (
-    actualSignature.length !== expectedSignature.length ||
-    !crypto.timingSafeEqual(actualSignature, expectedSignature)
-  ) {
+  let header;
+  try {
+    header = JSON.parse(base64UrlDecode(encodedHeader).toString('utf8'));
+  } catch (_) {
     throw new Error('Invalid authentication token');
   }
 
-  const claims = JSON.parse(base64UrlDecode(encodedPayload).toString('utf8'));
+  if (!header || typeof header !== 'object' || !header.alg || header.alg === 'none') {
+    throw new Error('Invalid authentication token');
+  }
+
+  const signedPayload = `${encodedHeader}.${encodedPayload}`;
+  let verified = false;
+
+  if (header.alg === 'HS256' && config.supabaseJwtSecret) {
+    const expectedSignature = crypto
+      .createHmac('sha256', config.supabaseJwtSecret)
+      .update(signedPayload)
+      .digest();
+    const actualSignature = base64UrlDecode(encodedSignature);
+
+    if (
+      actualSignature.length !== expectedSignature.length ||
+      !crypto.timingSafeEqual(actualSignature, expectedSignature)
+    ) {
+      throw new Error('Invalid authentication token');
+    }
+    verified = true;
+  } else if (config.supabaseJwksUrl && (header.alg === 'ES256' || header.alg === 'RS256')) {
+    const publicKey = await getSupabasePublicKey(header.kid, header.alg);
+    if (!publicKey) {
+      if (config.supabaseAuthFallbackToApi) {
+        return handleAuthApiFallback(token, tokenHash);
+      }
+      throw new Error('Invalid authentication token');
+    }
+
+    const actualSignature = base64UrlDecode(encodedSignature);
+    const data = Buffer.from(signedPayload);
+
+    try {
+      if (header.alg === 'ES256') {
+        verified = crypto.verify(
+          'SHA256',
+          data,
+          { key: publicKey, dsaEncoding: 'ieee-p1363' },
+          actualSignature
+        );
+      } else if (header.alg === 'RS256') {
+        verified = crypto.verify('SHA256', data, publicKey, actualSignature);
+      }
+    } catch (_) {
+      verified = false;
+    }
+
+    if (!verified) {
+      throw new Error('Invalid authentication token');
+    }
+  } else {
+    if (config.supabaseAuthFallbackToApi) {
+      return handleAuthApiFallback(token, tokenHash);
+    }
+    throw new Error('Invalid authentication token');
+  }
+
+  let claims;
+  try {
+    claims = JSON.parse(base64UrlDecode(encodedPayload).toString('utf8'));
+  } catch (_) {
+    throw new Error('Invalid authentication token');
+  }
+
+  if (!claims || typeof claims !== 'object') {
+    throw new Error('Invalid authentication token');
+  }
+
+  // exp is mandatory and must be a finite number
+  if (typeof claims.exp !== 'number' || !Number.isFinite(claims.exp)) {
+    throw new Error('Authentication token is missing an expiry');
+  }
   const nowSeconds = Math.floor(Date.now() / 1000);
-  if (!claims.sub || (claims.exp && claims.exp <= nowSeconds)) {
+  if (claims.exp <= nowSeconds) {
     throw new Error('Expired authentication token');
   }
 
+  // sub is required
+  if (!claims.sub || typeof claims.sub !== 'string') {
+    throw new Error('Invalid authentication token');
+  }
+
+  // role check
   if (claims.role && claims.role !== 'authenticated') {
     throw new Error('Authenticated user token required');
   }
 
+  // aud is mandatory and enforced by default
+  const expectedAudience = config.supabaseJwtAudience;
+  if (expectedAudience) {
+    const allowed = expectedAudience
+      .split(',')
+      .map(v => v.trim())
+      .filter(Boolean);
+    const tokenAudiences = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
+    if (!claims.aud || !tokenAudiences.some(a => allowed.includes(a))) {
+      throw new Error('Authentication token audience mismatch');
+    }
+  }
+
+  // iss is mandatory and enforced by default
+  const expectedIssuer = config.supabaseJwtIssuer;
+  if (expectedIssuer) {
+    if (!claims.iss || claims.iss !== expectedIssuer) {
+      throw new Error('Authentication token issuer mismatch');
+    }
+  }
+
+  const cacheTtlMs = config.jwtCacheTtlMs || 60 * 1000;
+  const tokenExpiresAtMs = claims.exp * 1000;
+  const expiresAt = Math.min(nowMs + cacheTtlMs, tokenExpiresAtMs);
+  if (expiresAt > nowMs) {
+    verifiedTokenCache[tokenHash] = {
+      claims,
+      expiresAt,
+    };
+    pruneVerifiedTokenCache(nowMs);
+  }
+
+  return claims;
+}
+
+async function handleAuthApiFallback(token, tokenHash) {
+  const claims = await verifySupabaseTokenWithAuthApi(token);
+  const now = Date.now();
+  const ttlMs = config.jwtCacheTtlMs || 60 * 1000;
+  verifiedTokenCache[tokenHash] = {
+    claims,
+    expiresAt: now + ttlMs,
+  };
+  pruneVerifiedTokenCache(now);
   return claims;
 }
 
@@ -2095,10 +2327,21 @@ module.exports = {
   ingestWorker,
   keyManager,
   SupabaseRequestError,
+  verifySupabaseJwt,
   ...(process.env.NODE_ENV === 'test' ? {
     testHooks: Object.freeze({
       keyManager,
       stellarServer: server,
+      verifySupabaseJwt,
+      getSupabasePublicKey,
+      verifiedTokenCache,
+      pruneVerifiedTokenCache,
+      clearVerifiedTokenCache: () => {
+        for (const k of Object.keys(verifiedTokenCache)) delete verifiedTokenCache[k];
+      },
+      clearJwksCache: () => {
+        jwksCache = { keys: [], expiresAt: 0 };
+      },
       acquireAddMoneyUserLock,
       releaseAddMoneyUserLock,
       acquireIdempotencyLock,

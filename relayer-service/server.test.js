@@ -310,6 +310,7 @@ async function loadServerModule(env = {}, { closeExisting = true } = {}) {
     ENABLE_TESTNET_FAUCET: 'true',
     LEDGER_INGEST_ENABLED: 'false',
     PORT: '0',
+    SUPABASE_AUTH_FALLBACK_TO_API: 'true',
   };
 
   const { __fetchMock, ...envOverrides } = env;

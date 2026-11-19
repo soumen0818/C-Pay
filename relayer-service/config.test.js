@@ -66,4 +66,30 @@ describe('loadConfig', () => {
       SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
     })).toThrow('SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required');
   });
+
+  it('defaults quotesEnabled to false and allows explicit override', () => {
+    const config = loadConfig({
+      ...validEnv,
+      NODE_ENV: 'test',
+      RELAYER_AUTH_REQUIRED: 'true',
+      CORS_ORIGIN: 'https://app.example.com',
+      SUPABASE_URL: 'https://project.supabase.co',
+      SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
+    });
+    expect(config.quotesEnabled).toBe(false);
+    expect(config.quoteSignatureSecret).toBe('');
+
+    const enabledConfig = loadConfig({
+      ...validEnv,
+      NODE_ENV: 'test',
+      RELAYER_AUTH_REQUIRED: 'true',
+      CORS_ORIGIN: 'https://app.example.com',
+      SUPABASE_URL: 'https://project.supabase.co',
+      SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
+      ENABLE_QUOTES_API: 'true',
+      QUOTE_SIGNATURE_SECRET: 'test-secret',
+    });
+    expect(enabledConfig.quotesEnabled).toBe(true);
+    expect(enabledConfig.quoteSignatureSecret).toBe('test-secret');
+  });
 });
