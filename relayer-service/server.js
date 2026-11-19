@@ -28,6 +28,7 @@ const quoteEngine = createQuoteEngine({
   },
   feeBps: config.quoteFeeBps,
   spreadBps: config.quoteSpreadBps,
+  signingSecret: config.quoteSignatureSecret,
   ttlSeconds: config.quoteTtlSeconds,
 });
 const server = new StellarSdk.Horizon.Server(config.horizonUrl, {
@@ -120,12 +121,23 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok' });
 });
 
-app.post('/quotes', requireAuthenticatedUser, async (req, res) => {
+function requireQuotesEnabled(_req, res, next) {
+  if (!config.quotesEnabled) {
+    return res.status(503).json({
+      error: 'Quotes API is feature-flagged and disabled until a partner integration exists',
+      code: 'QUOTES_DISABLED',
+    });
+  }
+  return next();
+}
+
+app.post('/quotes', requireQuotesEnabled, requireAuthenticatedUser, async (req, res) => {
   try {
     const quote = await quoteEngine.createQuote({
       sendAmount: req.body.sendAmount,
       sendCurrency: req.body.sendCurrency,
       receiveCurrency: req.body.receiveCurrency,
+      ownerId: req.auth && req.auth.sub,
     });
     res.status(201).json(quote);
   } catch (error) {
@@ -134,11 +146,17 @@ app.post('/quotes', requireAuthenticatedUser, async (req, res) => {
   }
 });
 
-app.post('/quotes/validate', requireAuthenticatedUser, (req, res) => {
+app.post('/quotes/validate', requireQuotesEnabled, requireAuthenticatedUser, (req, res) => {
   try {
-    res.json(quoteEngine.assertFresh(req.body));
+    const quote = quoteEngine.assertFreshForOwner(req.body, req.auth && req.auth.sub);
+    res.json(quote);
   } catch (error) {
-    res.status(410).json({ error: error.message, code: error.code || 'QUOTE_EXPIRED' });
+    let status = 410;
+    if (error.code === 'QUOTE_SIGNING_NOT_CONFIGURED') status = 503;
+    else if (error.code === 'QUOTE_OWNER_MISMATCH') status = 403;
+    else if (error.code === 'QUOTE_SIGNATURE_MISMATCH') status = 400;
+    else if (error.code === 'QUOTE_EXPIRED') status = 410;
+    res.status(status).json({ error: error.message, code: error.code || 'QUOTE_EXPIRED' });
   }
 });
 
