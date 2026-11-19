@@ -106,6 +106,16 @@ function loadConfig(env = process.env) {
     authRequired,
     adminToken: optionalString(env.RELAYER_ADMIN_TOKEN) || '',
     supabaseJwtSecret: optionalString(env.SUPABASE_JWT_SECRET) || '',
+    supabaseJwtAudience: optionalString(env.SUPABASE_JWT_AUDIENCE) || 'authenticated',
+    supabaseJwtIssuer:
+      optionalString(env.SUPABASE_JWT_ISSUER) ||
+      (supabaseUrl ? `${supabaseUrl.replace(/\/$/, '')}/auth/v1` : ''),
+    supabaseJwksUrl:
+      optionalString(env.SUPABASE_JWKS_URL) ||
+      (supabaseUrl ? `${supabaseUrl.replace(/\/$/, '')}/auth/v1/.well-known/jwks.json` : ''),
+    supabaseAuthFallbackToApi: readBoolean(env, 'SUPABASE_AUTH_FALLBACK_TO_API', false),
+    jwtCacheTtlMs: readNumber(env, 'JWT_CACHE_TTL_MS', 60 * 1000, { integer: true, min: 0 }),
+    jwksCacheTtlMs: readNumber(env, 'JWKS_CACHE_TTL_MS', 10 * 60 * 1000, { integer: true, min: 0 }),
     supabaseUrl,
     supabaseServiceRoleKey,
     addMoneyEnabled: networkName === 'testnet' && readBoolean(env, 'ENABLE_TESTNET_FAUCET', false),
