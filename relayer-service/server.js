@@ -36,9 +36,11 @@ const server = new StellarSdk.Horizon.Server(config.horizonUrl, {
 });
 const { KeyManager } = require('./keyManager');
 const keyManager = new KeyManager({
+  provider: config.signerProvider,
   sponsorSecret: config.sponsorSecret,
   distributionSecret: config.distributionSecret,
-  alertWebhookUrl: process.env.ALERT_WEBHOOK_URL,
+  alertWebhookUrl: config.alertWebhookUrl,
+  maxSignsPerMinute: config.maxSignsPerMinute,
 });
 const sponsorSigner = {
   publicKey: () => keyManager.getSigner('sponsor').publicKey(),
