@@ -199,7 +199,7 @@ To sign off on the rehearsal gate prior to mainnet deployment, the operations te
 
 | Requirement | Implementation | Status |
 | :--- | :--- | :--- |
-| **Written Custody Plan** | [docs/custody.md](file:///d:/Coding%20Only/OpenSource/saurav/C-Pay/docs/custody.md) detailing inventory, storage, rotation, and alerting | ✅ Complete |
+| **Written Custody Plan** | [docs/custody.md](custody.md) detailing inventory, storage, rotation, and alerting | ✅ Complete |
 | **Unified Signing Path** | All relayer transaction signing routed exclusively through `KeyManager` (`relayer-service/keyManager.js`) | ✅ Complete |
 | **Pre-Mainnet Pilot Custody Posture** | Testnet uses local-keypair driver in `KeyManager` with env secrets; route handlers have zero raw secret access | ✅ Complete |
 | **No Raw Secrets in Production (Cloud KMS / HSM)** | AWS KMS / Vault driver integration in `KeyManager` | ⏳ Outstanding Mainnet Gate |

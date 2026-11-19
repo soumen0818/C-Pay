@@ -116,6 +116,9 @@ function loadConfig(env = process.env) {
     quoteFeeBps: readNumber(env, 'QUOTE_FEE_BPS', 175, { integer: true, min: 0, max: 10000 }),
     quoteSpreadBps: readNumber(env, 'QUOTE_SPREAD_BPS', 0, { integer: true, min: 0, max: 10000 }),
     quoteTtlSeconds: readNumber(env, 'QUOTE_TTL_SECONDS', 60, { integer: true, min: 0, exclusiveMin: true }),
+    signerProvider: (optionalString(env.SIGNER_PROVIDER) || 'env').toLowerCase(),
+    maxSignsPerMinute: readNumber(env, 'MAX_SIGNS_PER_MINUTE', 120, { integer: true, min: 0, exclusiveMin: true }),
+    alertWebhookUrl: optionalString(env.ALERT_WEBHOOK_URL) || null,
   };
 }
 
@@ -218,6 +221,7 @@ function getPublicConfig(config) {
     maxPaymentDailyAmount: config.maxPaymentDailyAmount,
     maxPaymentDailyCount: config.maxPaymentDailyCount,
     maxPaymentVelocityPerMinute: config.maxPaymentVelocityPerMinute,
+    signerProvider: config.signerProvider,
   };
 }
 
