@@ -59,7 +59,12 @@ async function executeSupabaseRequest({
   const cleanBase = baseUrl ? baseUrl.replace(/\/$/, '') : '';
   const url = `${cleanBase}/rest/v1/${path}`;
 
+  const defaultSignal = typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function'
+    ? AbortSignal.timeout(5000)
+    : undefined;
+
   const response = await doFetch(url, {
+    signal: options.signal || defaultSignal,
     ...options,
     headers: {
       apikey: serviceRoleKey,

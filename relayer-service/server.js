@@ -80,6 +80,7 @@ const ingestWorker = new IngestWorker({
  */
 const LOW_BALANCE_ALERT_WINDOW_MS = config.lowBalanceAlertWindowMs;
 let localLowBalanceAlertUntil = 0;
+const localAlertCooldowns = Object.create(null);
 
 /**
  * Bounded cache for prepared account transactions.
@@ -264,6 +265,9 @@ app.post(
   requireAccountPreparationOwnership('accountId'),
   async (req, res) => {
     const accountId = assertAccountId(req.body.accountId, 'accountId');
+
+    // Check sponsor balance alarm
+    await checkSponsorBalanceAlarm().catch(() => {});
 
     const status = await getAccountStatus(accountId);
 
@@ -1395,6 +1399,9 @@ async function verifySupabaseTokenWithAuthApi(token) {
       apikey: config.supabaseServiceRoleKey,
       Authorization: `Bearer ${token}`,
     },
+    signal: typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function'
+      ? AbortSignal.timeout(config.outboundFetchTimeoutMs || 5000)
+      : undefined,
   });
   const user = await response.json().catch(() => ({}));
 
@@ -2208,7 +2215,8 @@ function validatePaymentTransaction(transaction) {
 }
 
 async function sendLowBalanceAlert({ sponsorXlm, distributionAsset, lowXlm, lowAsset }) {
-  if (!process.env.ALERT_WEBHOOK_URL) {
+  const webhookUrl = process.env.ALERT_WEBHOOK_URL || config.alertWebhookUrl;
+  if (!webhookUrl) {
     return;
   }
 
@@ -2217,9 +2225,12 @@ async function sendLowBalanceAlert({ sponsorXlm, distributionAsset, lowXlm, lowA
     lowAsset ? `Distribution USDC balance is ${distributionAsset}` : null,
   ].filter(Boolean);
 
-  await fetch(process.env.ALERT_WEBHOOK_URL, {
+  await fetch(webhookUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
+    signal: typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function'
+      ? AbortSignal.timeout(config.outboundFetchTimeoutMs || 5000)
+      : undefined,
     body: JSON.stringify({
       service: 'cpay-stellar-relayer',
       network: config.networkName,
@@ -2229,6 +2240,27 @@ async function sendLowBalanceAlert({ sponsorXlm, distributionAsset, lowXlm, lowA
       timestamp: new Date().toISOString(),
     }),
   });
+}
+
+/**
+ * Check sponsor account XLM balance and trigger alarm if below threshold.
+ * Runs on account preparation and deduplicates alerts via the unified alert state machine.
+ */
+async function checkSponsorBalanceAlarm() {
+  try {
+    const balances = await getBalances(sponsorSigner.publicKey());
+    const sponsorXlm = Number(balances.xlm || '0');
+    if (sponsorXlm < config.lowXlmThreshold) {
+      console.warn(`[SPONSOR_DRAIN_ALARM] Sponsor account XLM balance is low: ${sponsorXlm} XLM (threshold: ${config.lowXlmThreshold})`);
+      if (await shouldSendLowBalanceAlert('sponsor_balance')) {
+        await sendLowBalanceAlert({ sponsorXlm, distributionAsset: null, lowXlm: true, lowAsset: false });
+      }
+    } else {
+      await resetLowBalanceAlert('sponsor_balance');
+    }
+  } catch (err) {
+    console.warn('Failed to check sponsor balance alarm:', err.message);
+  }
 }
 
 async function checkLowBalanceAlerts() {
@@ -2241,19 +2273,41 @@ async function checkLowBalanceAlerts() {
   const lowXlm = sponsorXlm < config.lowXlmThreshold;
   const lowAsset = distributionAsset < config.lowAssetThreshold;
 
-  if (lowXlm || lowAsset) {
-    if (await shouldSendLowBalanceAlert()) {
-      await sendLowBalanceAlert({ sponsorXlm, distributionAsset, lowXlm, lowAsset });
+  if (lowXlm) {
+    if (await shouldSendLowBalanceAlert('sponsor_balance')) {
+      await sendLowBalanceAlert({ sponsorXlm, distributionAsset: null, lowXlm: true, lowAsset: false });
     }
   } else {
-    await resetLowBalanceAlert();
+    await resetLowBalanceAlert('sponsor_balance');
+  }
+
+  if (lowAsset) {
+    if (await shouldSendLowBalanceAlert('distribution_balance')) {
+      await sendLowBalanceAlert({ sponsorXlm: null, distributionAsset, lowXlm: false, lowAsset: true });
+    }
+  } else {
+    await resetLowBalanceAlert('distribution_balance');
   }
 }
 
 const LOW_BALANCE_ALERT_KEY = 'alert:low-balance';
 
-async function shouldSendLowBalanceAlert() {
+function getAlertStorageKey(condition = 'low-balance') {
+  if (!condition || condition === 'low-balance') {
+    return LOW_BALANCE_ALERT_KEY;
+  }
+  return `${LOW_BALANCE_ALERT_KEY}:${condition}`;
+}
+
+async function shouldSendLowBalanceAlert(condition = 'low-balance') {
   const now = Date.now();
+  const alertKey = getAlertStorageKey(condition);
+
+  const cooldownUntil = localAlertCooldowns[condition] || (condition === 'low-balance' ? localLowBalanceAlertUntil : 0);
+  if (cooldownUntil > now) {
+    return false;
+  }
+
   if (isSupabasePersistenceEnabled()) {
     try {
       const expiresAt = new Date(now + LOW_BALANCE_ALERT_WINDOW_MS).toISOString();
@@ -2261,17 +2315,20 @@ async function shouldSendLowBalanceAlert() {
         method: 'POST',
         headers: { Prefer: 'return=minimal' },
         body: JSON.stringify({
-          key: LOW_BALANCE_ALERT_KEY,
-          response: { alertedAt: new Date(now).toISOString() },
+          key: alertKey,
+          response: { alertedAt: new Date(now).toISOString(), condition },
           expires_at: expiresAt,
         }),
       });
-      localLowBalanceAlertUntil = now + LOW_BALANCE_ALERT_WINDOW_MS;
+      localAlertCooldowns[condition] = now + LOW_BALANCE_ALERT_WINDOW_MS;
+      if (condition === 'low-balance') {
+        localLowBalanceAlertUntil = now + LOW_BALANCE_ALERT_WINDOW_MS;
+      }
       return true;
     } catch (error) {
       if (isPostgresUniqueViolation(error)) {
         try {
-          const query = new URLSearchParams({ select: 'expires_at', key: `eq.${LOW_BALANCE_ALERT_KEY}`, limit: '1' });
+          const query = new URLSearchParams({ select: 'expires_at', key: `eq.${alertKey}`, limit: '1' });
           const rows = await supabaseRestRequest(`relayer_idempotency_keys?${query.toString()}`, {
             method: 'GET',
             headers: { Accept: 'application/json' },
@@ -2279,17 +2336,26 @@ async function shouldSendLowBalanceAlert() {
           if (Array.isArray(rows) && rows.length > 0 && rows[0].expires_at) {
             const exp = new Date(rows[0].expires_at).getTime();
             if (exp <= now) {
-              const patchQuery = new URLSearchParams({ key: `eq.${LOW_BALANCE_ALERT_KEY}` });
+              const patchQuery = new URLSearchParams({ key: `eq.${alertKey}` });
               await supabaseRestRequest(`relayer_idempotency_keys?${patchQuery.toString()}`, {
                 method: 'PATCH',
                 headers: { Prefer: 'return=minimal' },
                 body: JSON.stringify({
                   expires_at: new Date(now + LOW_BALANCE_ALERT_WINDOW_MS).toISOString(),
-                  response: { alertedAt: new Date(now).toISOString() },
+                  response: { alertedAt: new Date(now).toISOString(), condition },
                 }),
               });
-              localLowBalanceAlertUntil = now + LOW_BALANCE_ALERT_WINDOW_MS;
+              localAlertCooldowns[condition] = now + LOW_BALANCE_ALERT_WINDOW_MS;
+              if (condition === 'low-balance') {
+                localLowBalanceAlertUntil = now + LOW_BALANCE_ALERT_WINDOW_MS;
+              }
               return true;
+            } else {
+              localAlertCooldowns[condition] = exp;
+              if (condition === 'low-balance') {
+                localLowBalanceAlertUntil = exp;
+              }
+              return false;
             }
           }
         } catch {}
@@ -2298,18 +2364,22 @@ async function shouldSendLowBalanceAlert() {
     }
   }
 
-  if (localLowBalanceAlertUntil > now) {
-    return false;
+  localAlertCooldowns[condition] = now + LOW_BALANCE_ALERT_WINDOW_MS;
+  if (condition === 'low-balance') {
+    localLowBalanceAlertUntil = now + LOW_BALANCE_ALERT_WINDOW_MS;
   }
-  localLowBalanceAlertUntil = now + LOW_BALANCE_ALERT_WINDOW_MS;
   return true;
 }
 
-async function resetLowBalanceAlert() {
-  localLowBalanceAlertUntil = 0;
+async function resetLowBalanceAlert(condition = 'low-balance') {
+  delete localAlertCooldowns[condition];
+  if (!condition || condition === 'low-balance') {
+    localLowBalanceAlertUntil = 0;
+  }
   if (isSupabasePersistenceEnabled()) {
     try {
-      const query = new URLSearchParams({ key: `eq.${LOW_BALANCE_ALERT_KEY}` });
+      const alertKey = getAlertStorageKey(condition);
+      const query = new URLSearchParams({ key: `eq.${alertKey}` });
       await supabaseRestRequest(`relayer_idempotency_keys?${query.toString()}`, {
         method: 'DELETE',
         headers: { Prefer: 'return=minimal' },
@@ -2359,6 +2429,9 @@ module.exports = {
       shouldSendLowBalanceAlert,
       resetLowBalanceAlert,
       checkLowBalanceAlerts,
+      checkSponsorBalanceAlarm,
+      sendLowBalanceAlert,
+      localAlertCooldowns,
       handleRelayerError,
       getHorizonTransactionResultCodes,
       preparedAccountTransactions,

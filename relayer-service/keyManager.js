@@ -150,6 +150,7 @@ class KeyManager {
         await fetch(this.alertWebhookUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          signal: typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function' ? AbortSignal.timeout(5000) : undefined,
           body: JSON.stringify({
             service: 'cpay-key-custody',
             ...payload,
