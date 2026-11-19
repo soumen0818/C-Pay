@@ -66,4 +66,40 @@ describe('loadConfig', () => {
       SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
     })).toThrow('SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required');
   });
+
+  it('sets secure JWT and JWKS configuration defaults', () => {
+    const config = loadConfig({
+      ...validEnv,
+      NODE_ENV: 'test',
+      RELAYER_AUTH_REQUIRED: 'true',
+      CORS_ORIGIN: 'https://app.example.com',
+      SUPABASE_URL: 'https://project.supabase.co',
+      SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
+    });
+
+    expect(config.supabaseJwtAudience).toBe('authenticated');
+    expect(config.supabaseJwtIssuer).toBe('https://project.supabase.co/auth/v1');
+    expect(config.supabaseJwksUrl).toBe('https://project.supabase.co/auth/v1/.well-known/jwks.json');
+    expect(config.supabaseAuthFallbackToApi).toBe(false);
+  });
+
+  it('allows explicit overrides for JWT audience, issuer, JWKS URL and API fallback', () => {
+    const config = loadConfig({
+      ...validEnv,
+      NODE_ENV: 'test',
+      RELAYER_AUTH_REQUIRED: 'true',
+      CORS_ORIGIN: 'https://app.example.com',
+      SUPABASE_URL: 'https://project.supabase.co',
+      SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
+      SUPABASE_JWT_AUDIENCE: 'custom-aud',
+      SUPABASE_JWT_ISSUER: 'https://auth.custom.com',
+      SUPABASE_JWKS_URL: 'https://auth.custom.com/.well-known/jwks.json',
+      SUPABASE_AUTH_FALLBACK_TO_API: 'true',
+    });
+
+    expect(config.supabaseJwtAudience).toBe('custom-aud');
+    expect(config.supabaseJwtIssuer).toBe('https://auth.custom.com');
+    expect(config.supabaseJwksUrl).toBe('https://auth.custom.com/.well-known/jwks.json');
+    expect(config.supabaseAuthFallbackToApi).toBe(true);
+  });
 });
