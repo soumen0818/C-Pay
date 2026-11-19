@@ -28,7 +28,8 @@ Every privilege statement that the retired `App/supabase_schema.sql` issued, che
 | `users` | none (default ALL) | anon ALL (RLS-blocked); authenticated DELETE/TRUNCATE | anon none; authenticated SELECT, INSERT, UPDATE |
 | `wallet_backups` | `:583` SELECT, INSERT, UPDATE, DELETE → authenticated | + anon ALL and TRUNCATE via default | anon none; authenticated keeps its RLS-scoped CRUD |
 | `transactions` | none (default ALL) | Locked by `20260829000001` / `20260831000001`; REFERENCES, TRIGGER left | authenticated SELECT only |
-| `add_money_claims`, `relayer_idempotency_keys`, `contract_intent_cache` | `:558-560` REVOKE ALL from clients | Unchanged | Re-asserted. service_role only. |
+| `add_money_claims`, `relayer_idempotency_keys` | `:558-560` REVOKE ALL from clients | Unchanged | Re-asserted. service_role only. |
+| `contract_intent_cache` | `:558-560` REVOKE ALL from clients | Dropped | Dropped in 20261120000001 (#225). Does not exist. |
 | `ingest_state`, `payment_records` | n/a | REVOKE ALL from clients | Re-asserted. service_role only. |
 
 ## Findings beyond the merchant functions
@@ -44,7 +45,7 @@ Every privilege statement that the retired `App/supabase_schema.sql` issued, che
 ## Not changed here (follow-ups)
 
 - `users_update_own` lets a user change their own `wallet_address` to any wallet nobody has claimed. `current_wallet_address()` then exposes that wallet's `transactions` rows (notes, names). Fixing this needs column-level UPDATE grants matched to what the app writes.
-- `contract_intent_cache` is no longer referenced by the relayer and can be dropped.
+- `contract_intent_cache` was dropped in migration `20261120000001_migration_hygiene_cleanup.sql` (#225).
 
 ## Operating on an existing deployment
 
