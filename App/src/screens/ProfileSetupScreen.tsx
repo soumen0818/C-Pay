@@ -59,9 +59,16 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({ navigati
     }
   };
 
-  const uploadProfilePhoto = async (photoUri: string, address: string): Promise<string | null> => {
+  const uploadProfilePhoto = async (photoUri: string, _address: string): Promise<string | null> => {
     try {
       Logger.info('Uploading profile photo...');
+
+      const { data: sessionData } = await supabase.auth.getSession();
+      const authUserId = sessionData.session?.user?.id || (await supabase.auth.getUser()).data.user?.id;
+      if (!authUserId) {
+        Logger.error('User not authenticated for avatar upload');
+        return null;
+      }
 
       // Read file as base64
       const base64 = await fetch(photoUri)
@@ -78,9 +85,19 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({ navigati
           });
         });
 
-      const fileExt = photoUri.split('.').pop()?.split('?')[0] || 'jpg';
-      const fileName = `${address.substring(0, 8)}_${Date.now()}.${fileExt}`;
-      const filePath = `profile-photos/${fileName}`;
+      const fileExt = photoUri.split('.').pop()?.split('?')[0]?.toLowerCase() || 'jpg';
+      let contentType = 'image/jpeg';
+      if (fileExt === 'png') {
+        contentType = 'image/png';
+      } else if (fileExt === 'webp') {
+        contentType = 'image/webp';
+      } else if (fileExt === 'gif') {
+        contentType = 'image/gif';
+      } else {
+        contentType = 'image/jpeg';
+      }
+
+      const filePath = `${authUserId}/avatar.jpg`;
 
       // Convert base64 to array buffer
       const binaryString = atob(base64);
@@ -89,11 +106,16 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({ navigati
         bytes[i] = binaryString.charCodeAt(i);
       }
 
+      if (bytes.length > 5242880) {
+        Logger.error('Profile photo exceeds 5MB limit');
+        return null;
+      }
+
       // Upload to Supabase Storage
       const { error: uploadError } = await supabase.storage
         .from('profile-images')
         .upload(filePath, bytes.buffer, {
-          contentType: `image/${fileExt}`,
+          contentType,
           upsert: true,
         });
 
@@ -107,7 +129,7 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({ navigati
         .from('profile-images')
         .getPublicUrl(filePath);
 
-      return urlData.publicUrl;
+      return `${urlData.publicUrl}?t=${Date.now()}`;
     } catch (error) {
       Logger.error('Error uploading photo:', error);
       return null;
@@ -119,6 +141,9 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({ navigati
     emailToSave: string | null,
     photoUri: string | null
   ): Promise<void> => {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const authUserId = sessionData.session?.user?.id || (await supabase.auth.getUser()).data.user?.id || null;
+
     let photoUrl: string | null = null;
 
     if (photoUri) {
@@ -127,9 +152,6 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({ navigati
         await AsyncStorage.setItem('profile_photo', photoUrl);
       }
     }
-
-    const { data: sessionData } = await supabase.auth.getSession();
-    const authUserId = sessionData.session?.user.id || null;
 
     const { data, error: dbError } = await supabase
       .from('users')
