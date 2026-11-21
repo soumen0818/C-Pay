@@ -226,6 +226,7 @@ Verified against the code. Ordered by how much they'd cost you.
 **B-7 · The C-Pay ID is unstable and collision-prone.**
 `cpayId.ts:18-28` uses a 32-bit FNV-1a hash of the wallet address as the ID suffix — for an identifier people are supposed to *pay to*. Worse, `getCurrentUserCPayId()` (`cpayId.ts:124-138`) regenerates the ID whenever the underlying email changes and overwrites it in the DB. **A payment handle that changes is not a payment handle.** Old QR codes stop resolving. And since `users.cpay_id` is `UNIQUE`, a collision makes the UPDATE fail — and the error is discarded.
 *Fix:* assign an ID once, at account creation, from a collision-checked namespace. Never regenerate. Never derive it from mutable data.
+*Status: fixed (#161).* The database assigns the ID once (`allocate_cpay_id` + `cpay_id_reservations` in `20261022000001_stable_cpay_ids.sql`). `20261121000002_private_cpay_id_handles.sql` makes new handles random (`user<hex>@cpay<hex>`), so they no longer leak the email. It also retries collisions instead of dropping them, freezes existing IDs (`NOT NULL`, any change raises), and the App only reads the ID (enforced by `cpayIdClientWrites.test.ts`).
 
 **B-8 · The production relayer will time out on every cold start.**
 `app.json` points the app at `https://c-pay-mp8i.onrender.com`. Render's free tier spins down after ~15 minutes idle and takes 30–60s to wake. `blockchain.ts:58` sets `RELAYER_TIMEOUT_MS = 12000`. **The first payment after any quiet period always fails** with "Payment service is taking too long."
