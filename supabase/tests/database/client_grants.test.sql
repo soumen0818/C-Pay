@@ -1,6 +1,6 @@
 BEGIN;
 
-SELECT plan(13);
+SELECT plan(16);
 
 -- Functions owned by an extension (uuid-ossp, pgtap, ...) are not ours to audit.
 CREATE TEMP VIEW audited_functions AS
@@ -81,8 +81,31 @@ SELECT is_empty(
 SELECT set_eq(
   $$ SELECT relname::TEXT FROM audited_tables
      WHERE has_table_privilege('authenticated', oid, 'INSERT, UPDATE, DELETE') $$,
-  ARRAY['users', 'wallet_backups'],
-  'authenticated can write only users and wallet_backups'
+  ARRAY['wallet_backups'],
+  'authenticated holds table-level writes only on wallet_backups'
+);
+
+-- users: column-level UPDATE on profile fields only (#160) -------------------
+
+SELECT ok(
+  NOT has_table_privilege('authenticated', 'public.users', 'INSERT')
+  AND NOT has_table_privilege('authenticated', 'public.users', 'UPDATE'),
+  'authenticated cannot INSERT users or UPDATE every users column'
+);
+
+SELECT set_eq(
+  $$ SELECT column_name::TEXT FROM information_schema.columns
+     WHERE table_schema = 'public' AND table_name = 'users'
+       AND has_column_privilege('authenticated', 'public.users', column_name, 'UPDATE') $$,
+  ARRAY['display_name', 'profile_photo_url', 'biometric_enabled'],
+  'authenticated can UPDATE only display_name, profile_photo_url and biometric_enabled'
+);
+
+SELECT is_empty(
+  $$ SELECT column_name FROM information_schema.columns
+     WHERE table_schema = 'public' AND table_name = 'users'
+       AND has_column_privilege('authenticated', 'public.users', column_name, 'INSERT') $$,
+  'authenticated cannot INSERT any users column'
 );
 
 SELECT set_eq(

@@ -59,6 +59,7 @@ const {
 } = require('./supabaseRest');
 
 const { IngestWorker } = require('./ingestWorker');
+const { buildOwnerFilterQueries, mergeRowsById } = require('./postgrestFilters');
 const ingestWorker = new IngestWorker({
   horizonUrl: config.horizonUrl,
   assetCode: config.assetCode,
@@ -449,9 +450,49 @@ app.post('/payments/submit', requireAuthenticatedUser, requireWalletOwnership(),
 });
 
 app.get(['/payments/limits', '/limits'], requireAuthenticatedUser, async (req, res) => {
+  // Limits are per authenticated user. An optional ?accountId is accepted only
+  // when it is a valid Stellar address bound to the caller (Issue #159).
+  const rawAccountId = req.query.accountId;
+  let walletAddress = null;
+  if (rawAccountId !== undefined) {
+    if (typeof rawAccountId !== 'string') {
+      return res.status(400).json({ error: 'Invalid Stellar accountId', code: 'INVALID_ACCOUNT_ID' });
+    }
+    try {
+      walletAddress = assertAccountId(rawAccountId, 'accountId');
+    } catch (error) {
+      return res.status(400).json({ error: error.message, code: 'INVALID_ACCOUNT_ID' });
+    }
+  }
+
+  const authUid = (req.auth && req.auth.sub) || null;
+
+  if (config.authRequired) {
+    if (!authUid) {
+      return res.status(401).json({ error: 'Authentication required', code: 'AUTH_REQUIRED' });
+    }
+    if (walletAddress) {
+      const ownershipResult = await resolveUserWallets(authUid);
+      if (!ownershipResult.configured || !ownershipResult.ok) {
+        return sendWalletOwnershipUnavailable(res, ownershipResult.error);
+      }
+      if (!ownershipResult.wallets.includes(walletAddress)) {
+        return res.status(403).json({
+          error: 'You are not authorized to view limits for this wallet',
+          code: 'WALLET_OWNERSHIP_DENIED',
+        });
+      }
+    }
+  } else if (!walletAddress) {
+    // Auth-disabled development: there is no user to scope by, so a wallet is
+    // mandatory. Never fall through to an unscoped lookup.
+    return res.status(400).json({
+      error: 'accountId is required when authentication is disabled',
+      code: 'ACCOUNT_ID_REQUIRED',
+    });
+  }
+
   try {
-    const authUid = req.auth && req.auth.sub;
-    const walletAddress = req.query.accountId || (req.resolvedWallets && req.resolvedWallets[0]);
     const limits = await getPaymentLimitsStatus(authUid, walletAddress);
     res.json(limits);
   } catch (error) {
@@ -1677,33 +1718,37 @@ async function getPersistedAddMoneyRetryAfterSeconds(accountId, authUserId) {
   }
 
   try {
-    let filter;
-    if (authUserId) {
-      filter = `or=(auth_user_id.eq.${encodeURIComponent(authUserId)},wallet_address.eq.${encodeURIComponent(accountId)})`;
-    } else {
-      filter = `wallet_address=eq.${encodeURIComponent(accountId)}`;
-    }
+    const queries = buildOwnerFilterQueries(
+      { authUserId: authUserId || null, walletAddress: accountId || null },
+      {
+        select: 'next_available_at',
+        next_available_at: `gt.${new Date().toISOString()}`,
+        order: 'next_available_at.desc',
+        limit: '1',
+      }
+    );
 
-    const query = new URLSearchParams({
-      select: 'next_available_at',
-      next_available_at: `gt.${new Date().toISOString()}`,
-      order: 'next_available_at.desc',
-      limit: '1',
-    });
-
-    const rows = await supabaseRestRequest(`add_money_claims?${filter}&${query.toString()}`, {
-      method: 'GET',
-      headers: { Accept: 'application/json' },
-    });
-    if (!Array.isArray(rows)) {
-      throw new Error('Cooldown lookup returned an invalid response');
+    const rowSets = await Promise.all(queries.map(query =>
+      supabaseRestRequest(`add_money_claims?${query.toString()}`, {
+        method: 'GET',
+        headers: { Accept: 'application/json' },
+      })
+    ));
+    let latestMs = 0;
+    for (const rows of rowSets) {
+      if (!Array.isArray(rows)) {
+        throw new Error('Cooldown lookup returned an invalid response');
+      }
+      const nextAvailableAt = rows[0]?.next_available_at;
+      if (nextAvailableAt) {
+        latestMs = Math.max(latestMs, new Date(nextAvailableAt).getTime());
+      }
     }
-    const nextAvailableAt = rows[0]?.next_available_at;
-    if (!nextAvailableAt) {
+    if (!latestMs) {
       return 0;
     }
 
-    const remainingMs = new Date(nextAvailableAt).getTime() - Date.now();
+    const remainingMs = latestMs - Date.now();
     return remainingMs > 0 ? Math.ceil(remainingMs / 1000) : 0;
   } catch (error) {
     throw createAddMoneyPersistenceError(error, 'cooldown lookup');
@@ -1723,27 +1768,22 @@ async function checkAddMoneyDailyCap(accountId, authUserId, requestedAmount) {
 
   try {
     const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-    let filter;
-    if (authUserId) {
-      filter = `or=(auth_user_id.eq.${encodeURIComponent(authUserId)},wallet_address.eq.${encodeURIComponent(accountId)})`;
-    } else {
-      filter = `wallet_address=eq.${encodeURIComponent(accountId)}`;
-    }
+    const queries = buildOwnerFilterQueries(
+      { authUserId: authUserId || null, walletAddress: accountId || null },
+      {
+        select: 'id,amount,claimed_at',
+        claimed_at: `gte.${oneDayAgo}`,
+        order: 'claimed_at.asc',
+      }
+    );
 
-    const query = new URLSearchParams({
-      select: 'amount,claimed_at',
-      claimed_at: `gte.${oneDayAgo}`,
-      order: 'claimed_at.asc',
-    });
-
-    const rows = await supabaseRestRequest(`add_money_claims?${filter}&${query.toString()}`, {
-      method: 'GET',
-      headers: { Accept: 'application/json' },
-    });
-
-    if (!Array.isArray(rows)) {
-      throw new Error('Daily cap lookup returned an invalid response');
-    }
+    const rowSets = await Promise.all(queries.map(query =>
+      supabaseRestRequest(`add_money_claims?${query.toString()}`, {
+        method: 'GET',
+        headers: { Accept: 'application/json' },
+      })
+    ));
+    const rows = mergeRowsById(rowSets, row => new Date(row.claimed_at).getTime());
     if (rows.length === 0) {
       return { allowed: true, totalClaimed: 0, retryAfterSeconds: 0 };
     }
@@ -1932,33 +1972,25 @@ async function getPaymentRecords(accountId, authUserId, sinceIso) {
     });
   }
 
-  let filter;
-  if (authUserId) {
-    filter = accountId
-      ? `or=(auth_user_id.eq.${encodeURIComponent(authUserId)},wallet_address.eq.${encodeURIComponent(accountId)})`
-      : `auth_user_id=eq.${encodeURIComponent(authUserId)}`;
-  } else {
-    filter = `wallet_address=eq.${encodeURIComponent(accountId)}`;
-  }
-
-  const query = new URLSearchParams({
-    select: 'amount,created_at',
-    order: 'created_at.asc',
-  });
+  const baseParams = { select: 'id,amount,created_at', order: 'created_at.asc' };
   if (sinceIso) {
-    query.set('created_at', `gte.${sinceIso}`);
+    baseParams.created_at = `gte.${sinceIso}`;
   }
+  // One query per owner column; throws if neither owner is present so the
+  // lookup can never widen to every user's records (Issue #159).
+  const queries = buildOwnerFilterQueries(
+    { authUserId: authUserId || null, walletAddress: accountId || null },
+    baseParams
+  );
 
-  const rows = await supabaseRestRequest(`payment_records?${filter}&${query.toString()}`, {
-    method: 'GET',
-    headers: { Accept: 'application/json' },
-  });
+  const rowSets = await Promise.all(queries.map(query =>
+    supabaseRestRequest(`payment_records?${query.toString()}`, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+    })
+  ));
 
-  if (!Array.isArray(rows)) {
-    throw new Error('Payment limits lookup returned an invalid response');
-  }
-
-  return rows;
+  return mergeRowsById(rowSets, row => new Date(row.created_at).getTime());
 }
 
 async function recordPaymentRecord({ id, authUserId, walletAddress, amount, txHash }) {

@@ -221,67 +221,52 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
     startTransactionPolling(15000); // Poll every 15 seconds
     
     // Listen for new transactions (real-time updates within same app)
-    const transactionListener = (transaction: Transaction) => {
+    const transactionListener = async (_transaction: Transaction) => {
       loadTransactions();
-      // Also refresh balance
-      if (walletAddress) {
-        loadBalance(walletAddress);
+      const currentAddress = await AsyncStorage.getItem('wallet_address');
+      if (currentAddress) {
+        loadBalance(currentAddress);
       }
     };
     
     storageEvents.on('transactionSaved', transactionListener);
     
-    // Setup Supabase real-time subscription for incoming transactions (for receivers)
-    let supabaseSubscription: any = null;
-    
-    const setupRealtimeSubscription = async () => {
-      if (!walletAddress) return;
-
-      // Guard against filter-injection: validate the wallet address before
-      // interpolating it into the PostgREST realtime filter string.
-      // supabase-js realtime only accepts filter as a raw string, so strict
-      // call-boundary validation is the correct mitigation here.
-      // isValidAccountId uses the Stellar SDK's Ed25519 public-key checker,
-      // which rejects anything that isn't a well-formed G-account address.
-      if (!isValidAccountId(walletAddress)) {
-        return;
-      }
-      
-      Logger.info('🔔 Setting up Supabase real-time subscription');
-      
-      // walletAddress is a validated Stellar Ed25519 public key (56-char base32
-      // starting with "G"), so interpolation here cannot carry filter syntax.
-      supabaseSubscription = supabase
-        .channel('transactions')
-        .on(
-          'postgres_changes',
-          {
-            event: 'INSERT',
-            schema: 'public',
-            table: 'transactions',
-            filter: `to_address=eq.${walletAddress}`,
-          },
-          (payload) => {
-            loadTransactions();
-            loadBalance(walletAddress);
-          }
-        )
-        .subscribe();
-    };
-    
-    if (walletAddress) {
-      setupRealtimeSubscription();
-    }
-    
-    // Cleanup on unmount
     return () => {
       stopTransactionPolling();
       storageEvents.off('transactionSaved', transactionListener);
-      
-      if (supabaseSubscription) {
-        supabase.removeChannel(supabaseSubscription);
-        Logger.info('🚫 Unsubscribed from Supabase real-time');
-      }
+    };
+  }, []);
+
+  // Setup Supabase real-time subscription for incoming transactions (for receivers)
+  // Scoped strictly to the validated recipient address so animations and polling are not restarted
+  useEffect(() => {
+    if (!walletAddress || !isValidAccountId(walletAddress)) {
+      return;
+    }
+
+    Logger.info('🔔 Setting up Supabase real-time subscription for incoming payments');
+
+    const channel = supabase
+      .channel(`transactions_incoming_${walletAddress}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'transactions',
+          filter: `to_address=eq.${walletAddress}`,
+        },
+        (payload) => {
+          Logger.info('🔔 Realtime incoming payment received:', payload);
+          loadTransactions();
+          loadBalance(walletAddress);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+      Logger.info('🚫 Unsubscribed from Supabase real-time incoming payments');
     };
   }, [walletAddress]);
 
