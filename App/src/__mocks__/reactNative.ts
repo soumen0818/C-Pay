@@ -11,3 +11,8 @@ export const Platform = {
 export const StyleSheet = {
   create: <T extends object>(styles: T) => styles,
 };
+
+export const AppState = {
+  currentState: 'active',
+  addEventListener: jest.fn(() => ({ remove: jest.fn() })),
+};

@@ -59,6 +59,8 @@ describe('isValidCPayId', () => {
     expect(isValidCPayId('alice@cpayk8f3qz')).toBe(true);
     expect(isValidCPayId('alice@cpay1234567890abcdef')).toBe(true);
     expect(isValidCPayId('first.last@cpay1234567890abcdef')).toBe(true);
+    // Random, non-identifying handles assigned by the database (#161).
+    expect(isValidCPayId('user3f9a0c@cpay1234567890abcdef')).toBe(true);
   });
 
   test('rejects malformed IDs and suffixes longer than 32 characters', () => {

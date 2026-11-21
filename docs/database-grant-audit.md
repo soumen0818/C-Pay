@@ -16,6 +16,7 @@ Every privilege statement that the retired `App/supabase_schema.sql` issued, che
 | `resolve_cpay_id(TEXT)` | `:442` → authenticated (anon via default) | Redefined users-only; **anon still allowed** | authenticated only. Users-only body re-asserted, because the schema-file body also returned merchant rows. |
 | `get_public_wallet_profile(TEXT)` | `:441` → authenticated (anon via default) | **anon could map wallet → C-Pay ID / name** | authenticated only |
 | `current_wallet_address()` | `:445` → authenticated (anon via default) | anon allowed | authenticated only |
+| `upsert_own_profile(TEXT, TEXT, BOOLEAN)` | n/a (added by `20261121000001`, #160) | n/a | authenticated only. Creates or updates the caller's `users` row. It takes the wallet from the caller's active `wallet_bindings` row and the email from the JWT. |
 | `set_row_auth_user_id()`, `update_updated_at_column()` | none | Trigger functions; cannot be called via RPC | Unchanged (excluded from the RPC audit) |
 
 ## Tables
@@ -25,10 +26,11 @@ Every privilege statement that the retired `App/supabase_schema.sql` issued, che
 | `merchant_contact_verifications` | `:603` SELECT, INSERT, UPDATE → authenticated | Dropped by `20260828000001:92` | Absent. On a schema-file deployment it is kept for the data-preserving drop, but `REVOKE ALL` from client roles leaves it not client-writable. |
 | `merchants`, `merchant_qr_codes` | none (default ALL) + client RLS | Dropped `:93-94` | Same as above: absent, or revoked from every client role. |
 | `wallet_bindings` | n/a (added by `20260827000001`) | **Client INSERT/UPDATE policies + default grants** | SELECT only for authenticated. The relayer (service_role) is the only writer. |
-| `users` | none (default ALL) | anon ALL (RLS-blocked); authenticated DELETE/TRUNCATE | anon none; authenticated SELECT, INSERT, UPDATE |
+| `users` | none (default ALL) | anon ALL (RLS-blocked); authenticated DELETE/TRUNCATE | anon none; authenticated SELECT, plus column-level UPDATE on `display_name`, `profile_photo_url`, `biometric_enabled` only (`20261121000001`, #160). Rows are created by `upsert_own_profile()`. |
 | `wallet_backups` | `:583` SELECT, INSERT, UPDATE, DELETE → authenticated | + anon ALL and TRUNCATE via default | anon none; authenticated keeps its RLS-scoped CRUD |
 | `transactions` | none (default ALL) | Locked by `20260829000001` / `20260831000001`; REFERENCES, TRIGGER left | authenticated SELECT only |
-| `add_money_claims`, `relayer_idempotency_keys`, `contract_intent_cache` | `:558-560` REVOKE ALL from clients | Unchanged | Re-asserted. service_role only. |
+| `add_money_claims`, `relayer_idempotency_keys` | `:558-560` REVOKE ALL from clients | Unchanged | Re-asserted. service_role only. |
+| `contract_intent_cache` | `:558-560` REVOKE ALL from clients | Dropped | Dropped in 20261120000001 (#225). Does not exist. |
 | `ingest_state`, `payment_records` | n/a | REVOKE ALL from clients | Re-asserted. service_role only. |
 
 ## Findings beyond the merchant functions
@@ -44,7 +46,7 @@ Every privilege statement that the retired `App/supabase_schema.sql` issued, che
 ## Not changed here (follow-ups)
 
 - `users_update_own` lets a user change their own `wallet_address` to any wallet nobody has claimed. `current_wallet_address()` then exposes that wallet's `transactions` rows (notes, names). Fixing this needs column-level UPDATE grants matched to what the app writes.
-- `contract_intent_cache` is no longer referenced by the relayer and can be dropped.
+- `contract_intent_cache` was dropped in migration `20261120000001_migration_hygiene_cleanup.sql` (#225).
 
 ## Operating on an existing deployment
 

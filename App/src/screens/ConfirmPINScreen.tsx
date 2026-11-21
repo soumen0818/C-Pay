@@ -15,6 +15,7 @@ import { OnboardingProgress } from '../components/OnboardingProgress';
 import { Screen } from '../components';
 import { cachePinForSession, createWallet } from '../services/wallet';
 import { supabase } from '../services/supabase';
+import { registerWalletAndSaveProfile } from '../services/profile';
 import { COLORS, SPACING, TYPOGRAPHY, createThemedStyles, useTheme } from '../constants/theme';
 import { AlertManager } from '../utils/alert';
 import { WALLET_AUTH_USER_ID_KEY } from '../services/auth';
@@ -31,22 +32,11 @@ const waitForUiPaint = () =>
 const saveInitialUserRecord = (walletAddress: string) => {
   void (async () => {
     try {
-      const verifiedEmail = await AsyncStorage.getItem('user_email');
-      const { error: dbError } = await supabase
-        .from('users')
-        .upsert(
-          {
-            wallet_address: walletAddress,
-            email: verifiedEmail || null,
-            biometric_enabled: false,
-          },
-          { onConflict: 'wallet_address' }
-        );
-
-      if (dbError) {
-        Logger.error('Database error:', dbError);
-      }
+      // The relayer binds the wallet; the database then creates the profile
+      // row from that binding (#160). Clients never write wallet_address.
+      await registerWalletAndSaveProfile(walletAddress, { biometricEnabled: false });
     } catch (error) {
+      // ProfileSetup retries this and surfaces failures to the user.
       Logger.error('Database save failed:', error);
     }
   })();
