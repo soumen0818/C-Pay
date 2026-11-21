@@ -35,6 +35,8 @@ const CONTENT: Record<InfoDoc, { title: string; blocks: Block[] }> = {
     blocks: [
       { type: 'heading', text: 'What we store' },
       { type: 'paragraph', text: 'C-Pay stores your display name, C-Pay ID, optional profile photo, and verified email. Your wallet is encrypted on your device; an optional encrypted backup can be stored to help you recover it.' },
+      { type: 'heading', text: 'Profile photos and storage' },
+      { type: 'paragraph', text: 'If you choose to upload a profile photo, it is stored in a public storage bucket (profile-images) under your authenticated account folder (<auth.uid>/avatar.jpg). Public URLs are used so your avatar can be rendered seamlessly across peer transfers, recipient confirmation, and contact discovery without signature expiration. Row-level security strictly ensures that only you can upload, overwrite, or delete your own profile photo.' },
       { type: 'heading', text: 'Your keys' },
       { type: 'paragraph', text: 'Your PIN and private keys never leave your device unencrypted. C-Pay cannot read or recover your PIN or secret key. Cloud backups are encrypted with a recovery password only you know.' },
       { type: 'heading', text: 'Payments' },
