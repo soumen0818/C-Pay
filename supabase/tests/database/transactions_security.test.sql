@@ -1,6 +1,6 @@
 BEGIN;
 
-SELECT plan(18);
+SELECT plan(20);
 
 SELECT has_table(
   'public',
@@ -49,6 +49,22 @@ SELECT ok(
       AND table_name IN ('merchants', 'merchant_qr_codes', 'merchant_contact_verifications')
   ),
   'no merchant table survives a clean provision'
+);
+
+SELECT hasnt_table(
+  'public',
+  'contract_intent_cache',
+  'the retired contract_intent_cache (Soroban) table is absent'
+);
+
+SELECT ok(
+  NOT EXISTS (
+    SELECT 1
+    FROM information_schema.tables
+    WHERE table_schema = 'public'
+      AND table_name = 'contract_intent_cache'
+  ),
+  'no Soroban table survives a clean provision'
 );
 
 SELECT ok(
