@@ -53,6 +53,27 @@ const USER_B = 'user-b-uid';
 // ─── mock fetch ──────────────────────────────────────────────────────────────
 
 /**
+ * Apply PostgREST-style single-column `eq.` owner filters to mock rows. Logical
+ * groups (`or=`/`and=`) are rejected outright so tests fail if the relayer ever
+ * goes back to string-built filter groups (Issue #159).
+ */
+function applyOwnerFilters(parsed, rows) {
+  if (parsed.searchParams.has('or') || parsed.searchParams.has('and')) {
+    throw new Error('Logical PostgREST filter groups must not be used: ' + parsed.search);
+  }
+  const userFilter = parsed.searchParams.get('auth_user_id');
+  const walletFilter = parsed.searchParams.get('wallet_address');
+  if (!userFilter && !walletFilter) {
+    throw new Error('Unscoped owner lookup: ' + parsed.search);
+  }
+  return rows.filter(row => {
+    if (userFilter && `eq.${row.auth_user_id}` !== userFilter) return false;
+    if (walletFilter && `eq.${row.wallet_address}` !== walletFilter) return false;
+    return true;
+  });
+}
+
+/**
  * The server uses the global `fetch` API for Supabase REST and Auth API calls.
  * We replace it with a controllable mock before the server module is loaded.
  *
@@ -181,14 +202,16 @@ function buildFetchMock({
         if (failCooldownLookup) {
           return makeResponse(false, 503, { code: 'PGRST000', message: 'database unavailable' });
         }
+        applyOwnerFilters(parsed, persistence.claims);
         return makeResponse(true, 200, []);
       }
 
-      if (method === 'GET' && select === 'amount,claimed_at') {
+      if (method === 'GET' && select === 'id,amount,claimed_at') {
         if (failDailyCapLookup) {
           return makeResponse(false, 503, { code: 'PGRST000', message: 'database unavailable' });
         }
-        return makeResponse(true, 200, persistence.claims.map(row => ({
+        return makeResponse(true, 200, applyOwnerFilters(parsed, persistence.claims).map(row => ({
+          id: row.id,
           amount: row.amount,
           claimed_at: row.claimed_at,
         })));
@@ -225,7 +248,8 @@ function buildFetchMock({
       }
 
       if (method === 'GET') {
-        const records = (persistence.paymentRecords || []).map(r => ({
+        const records = applyOwnerFilters(parsed, persistence.paymentRecords || []).map(r => ({
+          id: r.id,
           amount: r.amount,
           created_at: r.created_at,
           wallet_address: r.wallet_address,
@@ -1302,6 +1326,91 @@ describe('Payment transaction limits and velocity enforcement (#114)', () => {
       amount: 4500,
       transactions: 18,
     });
+  });
+
+  it('GET /payments/limits rejects a PostgREST filter injection payload with 400 (#159)', async () => {
+    persistence.paymentRecords = [
+      { id: 'rec-a', auth_user_id: USER_A, wallet_address: WALLET_A, amount: '100', created_at: new Date().toISOString() },
+      { id: 'rec-b', auth_user_id: USER_B, wallet_address: WALLET_B, amount: '900', created_at: new Date().toISOString() },
+    ];
+
+    for (const payload of [
+      'x,auth_user_id.not.is.null',
+      `${WALLET_A},auth_user_id.not.is.null`,
+      `${WALLET_A})`,
+    ]) {
+      const { status, body } = await getJson(
+        expressApp,
+        `/payments/limits?accountId=${encodeURIComponent(payload)}`,
+        { Authorization: makeBearerToken(USER_A) }
+      );
+      expect(status).toBe(400);
+      expect(body.code).toBe('INVALID_ACCOUNT_ID');
+    }
+
+    // Repeated query keys arrive as arrays and are rejected too.
+    const repeated = await getJson(
+      expressApp,
+      `/payments/limits?accountId=${WALLET_A}&accountId=${WALLET_B}`,
+      { Authorization: makeBearerToken(USER_A) }
+    );
+    expect(repeated.status).toBe(400);
+  });
+
+  it('GET /payments/limits returns 403 for a wallet bound to another user (#159)', async () => {
+    persistence.paymentRecords = [
+      { id: 'rec-b', auth_user_id: USER_B, wallet_address: WALLET_B, amount: '900', created_at: new Date().toISOString() },
+    ];
+
+    const { status, body } = await getJson(
+      expressApp,
+      `/payments/limits?accountId=${WALLET_B}`,
+      { Authorization: makeBearerToken(USER_A) }
+    );
+    expect(status).toBe(403);
+    expect(body.code).toBe('WALLET_OWNERSHIP_DENIED');
+    expect(body.amountToday).toBeUndefined();
+  });
+
+  it('GET /payments/limits only counts the caller\'s own records (#159)', async () => {
+    persistence.paymentRecords = [
+      { id: 'rec-a', auth_user_id: USER_A, wallet_address: WALLET_A, amount: '100', created_at: new Date().toISOString() },
+      { id: 'rec-b', auth_user_id: USER_B, wallet_address: WALLET_B, amount: '900', created_at: new Date().toISOString() },
+    ];
+
+    const withoutAccount = await getJson(expressApp, '/payments/limits', { Authorization: makeBearerToken(USER_A) });
+    expect(withoutAccount.status).toBe(200);
+    expect(withoutAccount.body.amountToday).toBe(100);
+    expect(withoutAccount.body.transactionsToday).toBe(1);
+
+    // An owned wallet matches the same row via both owner columns; it must be counted once.
+    const withAccount = await getJson(
+      expressApp,
+      `/payments/limits?accountId=${WALLET_A}`,
+      { Authorization: makeBearerToken(USER_A) }
+    );
+    expect(withAccount.status).toBe(200);
+    expect(withAccount.body.amountToday).toBe(100);
+    expect(withAccount.body.transactionsToday).toBe(1);
+  });
+
+  it('GET /payments/limits requires a valid accountId when auth is disabled (#159)', async () => {
+    const devMod = await loadServerModule({
+      RELAYER_AUTH_REQUIRED: 'false',
+      __fetchMock: buildFetchMock({ database: persistence }),
+    });
+    persistence.paymentRecords = [
+      { id: 'rec-a', auth_user_id: null, wallet_address: WALLET_A, amount: '100', created_at: new Date().toISOString() },
+      { id: 'rec-b', auth_user_id: null, wallet_address: WALLET_B, amount: '900', created_at: new Date().toISOString() },
+    ];
+
+    const missing = await getJson(devMod.app, '/payments/limits');
+    expect(missing.status).toBe(400);
+    expect(missing.body.code).toBe('ACCOUNT_ID_REQUIRED');
+
+    const scoped = await getJson(devMod.app, `/payments/limits?accountId=${WALLET_A}`);
+    expect(scoped.status).toBe(200);
+    expect(scoped.body.amountToday).toBe(100);
   });
 
   it('rejects payments exceeding the per-transaction cap (e.g. 1500 > 1000)', async () => {
