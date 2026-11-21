@@ -66,8 +66,8 @@ SELECT set_eq(
   $$ SELECT proname::TEXT FROM audited_functions
      WHERE pg_get_function_result(oid) <> 'trigger'
        AND has_function_privilege('authenticated', oid, 'EXECUTE') $$,
-  ARRAY['current_wallet_address', 'get_public_wallet_profile', 'resolve_cpay_id', 'upsert_own_profile'],
-  'authenticated can execute exactly the four client RPCs'
+  ARRAY['current_wallet_address', 'delete_my_account', 'get_public_wallet_profile', 'resolve_cpay_id'],
+  'authenticated can execute exactly the client RPCs'
 );
 
 -- Table grants --------------------------------------------------------------
