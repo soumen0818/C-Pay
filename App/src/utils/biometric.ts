@@ -99,6 +99,48 @@ export async function getAuthenticatedWallet(
 }
 
 /**
+ * Unlock the wallet for a high-risk action (secret-key export, #162).
+ *
+ * Unlike getAuthenticatedWallet, this NEVER reuses the in-memory session
+ * wallet or cached PIN: the user must pass a biometric prompt or enter their
+ * PIN right now, even if they unlocked moments ago. Anyone holding an
+ * already-unlocked phone therefore cannot export the seed.
+ *
+ * A PIN entered here is not cached for the session.
+ */
+export async function getFreshlyAuthenticatedWallet(
+  title: string = 'Enter PIN',
+  message: string = 'Enter your 6-digit PIN to confirm',
+  biometricPrompt: string = 'Confirm it\'s you'
+): Promise<StellarWallet | null> {
+  try {
+    const biometricEnabled = await AsyncStorage.getItem('biometric_enabled');
+    const available = await isBiometricAvailable();
+    if (biometricEnabled === 'true' && available) {
+      // Reading the biometric-protected backup always shows the OS prompt.
+      const biometricWallet = await getWalletFromBiometricBackup(biometricPrompt);
+      if (biometricWallet) {
+        return biometricWallet;
+      }
+    }
+  } catch (error) {
+    Logger.info('Biometric re-authentication unavailable, falling back to PIN');
+  }
+
+  if (!showPINDialog) {
+    return null;
+  }
+
+  const inputPin = await showPINDialog(title, message);
+  if (!inputPin || inputPin.length !== 6) {
+    return null;
+  }
+
+  const res = await getWallet(inputPin);
+  return res.success && res.wallet ? res.wallet : null;
+}
+
+/**
  * Check if biometric authentication is available on the device
  */
 export async function isBiometricAvailable(): Promise<boolean> {
