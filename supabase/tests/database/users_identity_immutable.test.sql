@@ -39,7 +39,7 @@ SELECT results_eq(
 
 SELECT matches(
   (SELECT cpay_id FROM public.users WHERE auth_user_id = 'a1a1a1a1-0000-0000-0000-000000000001'),
-  '^alice160@cpay[0-9a-f]{16}$',
+  '^[a-z0-9._-]{3,20}@cpay[0-9a-f]{16}$',
   'the database assigns the C-Pay ID'
 );
 
