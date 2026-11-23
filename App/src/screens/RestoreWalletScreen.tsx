@@ -32,6 +32,7 @@ import { supabase } from '../services/supabase';
 import { COLORS, SPACING, TYPOGRAPHY, BORDER_RADIUS, SHADOWS, createThemedStyles, useTheme } from '../constants/theme';
 import { AlertManager } from '../utils/alert';
 import { signOut, WALLET_AUTH_USER_ID_KEY } from '../services/auth';
+import { isWeakPin } from '../utils/pin';
 
 const FONT_SIZES = TYPOGRAPHY.sizes;
 
@@ -257,7 +258,7 @@ export const RestoreWalletScreen: React.FC<RestoreWalletScreenProps> = ({ naviga
     setError('');
 
     if (value.length === 6) {
-      if (['123456', '000000', '111111', '654321', '999999', '112233'].includes(value)) {
+      if (isWeakPin(value)) {
         setError('Please choose a stronger PIN. Avoid predictable sequences.');
         setTimeout(() => setPin(''), 250);
         return;

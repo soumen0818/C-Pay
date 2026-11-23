@@ -38,8 +38,8 @@ export const A11Y = {
   // Buttons
   CONFIRM_PAYMENT: 'Confirm payment',
   CANCEL_PAYMENT: 'Cancel payment',
-  SEND_CREDITS: 'Send USDC',
-  CLAIM_CREDITS: 'Claim testnet USDC',
+  SEND_USDC: 'Send USDC',
+  CLAIM_USDC: 'Claim testnet USDC',
   VIEW_HISTORY: 'View transaction history',
   ADD_MONEY: 'Add money',
 
@@ -69,6 +69,7 @@ export const A11Y = {
 export const ONBOARDING = {
   WELCOME_TITLE: 'Welcome to C-Pay',
   WELCOME_SUBTITLE: 'UPI-style payments on Stellar',
+  SUBTITLE: 'Closed pilot on Stellar testnet',
   GET_STARTED: 'Get Started',
   ALREADY_HAVE_ACCOUNT: 'Already have an account? Sign in',
   FEATURE_SECURE: 'Secure',
@@ -77,6 +78,7 @@ export const ONBOARDING = {
   FEATURE_FAST_DESC: 'Payments settle in seconds on Stellar',
   FEATURE_SIMPLE: 'Simple',
   FEATURE_SIMPLE_DESC: 'QR codes and C-Pay IDs — no addresses',
+  NO_FEE_DESC: 'Network fees are handled for you. You test payments with testnet USDC.',
 };
 
 // ─── Authentication ───────────────────────────────────────────────────────────
@@ -122,6 +124,25 @@ export const HOME = {
   NO_TRANSACTIONS_TITLE: 'No Transactions Yet',
   NO_TRANSACTIONS_DESC: 'Your transaction history will appear here',
   REFRESH_HINT: 'Pull to refresh your balance and transactions',
+  SEND_USDC: 'Send USDC',
+  ADD_MONEY_DISABLED_HINT: 'Add money coming soon through a licensed partner',
+  CLAIM_BUTTON: 'Claim Testnet USDC',
+  CLAIM_BUTTON_CLAIMING: 'Claiming Testnet USDC',
+  CLAIM_BUTTON_SUCCESS: 'Testnet USDC Added',
+  CLAIM_BUTTON_FAILED: 'Testnet USDC Claim Failed',
+  CLAIM_CHECKING: 'Checking Claim',
+  CLAIM_AUTH_REQUIRED: 'Authentication Required',
+  CLAIM_AVAILABLE: 'Testnet USDC is available now. You can claim again.',
+  CLAIM_COOLDOWN: (time: string) => `You can claim testnet USDC again in ${time}.`,
+  CLAIM_WAIT_24H: 'Please wait 24 hours between testnet USDC claims.',
+  CLAIM_DISTRIBUTION_EMPTY: 'Testnet USDC claims are temporarily unavailable because the relayer distribution account has no test asset balance.',
+  CLAIM_ACCOUNT_NOT_READY: 'Wallet setup could not finish yet. Please try again in a few seconds.',
+  CLAIM_DISABLED_NETWORK: 'Testnet USDC claims are disabled for this network.',
+  CLAIM_WALLET_OWNERSHIP_DENIED: 'Your wallet does not match your account. Sign out, sign back in, and try again.',
+  CLAIM_FAILED_FALLBACK: 'Failed to claim testnet USDC',
+  ADD_MONEY_PREPARING: 'Preparing your wallet on Stellar testnet and adding testnet USDC...',
+  ADD_MONEY_CLAIM_MSG: (amount: string) => `Claim ${amount} for testnet use. One claim is available every 24 hours.`,
+  ADD_MONEY_SUCCESS_MSG: (amount: string) => `${amount} has been added. Your balance will refresh automatically.`,
 };
 
 // ─── Payments ─────────────────────────────────────────────────────────────────
@@ -129,7 +150,7 @@ export const HOME = {
 export const PAYMENT = {
   SEND_TITLE: 'Send USDC',
   RECIPIENT_LABEL: 'To (C-Pay ID or wallet address)',
-  RECIPIENT_PLACEHOLDER: 'user@cpay… or G…',
+  RECIPIENT_PLACEHOLDER: 'username@cpay…',
   AMOUNT_LABEL: 'Amount',
   NOTE_LABEL: 'Note (optional)',
   NOTE_PLACEHOLDER: 'What is this for?',
@@ -142,6 +163,9 @@ export const PAYMENT = {
   SUCCESS_TITLE: 'Payment Sent',
   FAILURE_TITLE: 'Payment Failed',
   PROCESSING_TITLE: 'Processing Payment',
+  AUTH_PIN_PROMPT: 'Enter your 6-digit PIN to send testnet USDC',
+  AUTH_BIOMETRIC_PROMPT: 'Unlock wallet to send testnet USDC',
+  CANNOT_SEND_TO_SELF: 'You cannot send testnet USDC to yourself',
 };
 
 // ─── Transactions ─────────────────────────────────────────────────────────────
@@ -188,6 +212,38 @@ export const PROFILE = {
   CHANGE_PIN: 'Change PIN',
   BIOMETRIC_LABEL: 'Biometric unlock',
   NOTIFICATIONS_LABEL: 'Notifications',
+  QR_DIALOG_TITLE: 'Scan this QR code to send me testnet USDC on C-Pay.',
+  QR_SHARE_CARD_FOOTER: 'Scan to send testnet USDC',
+  QR_SHARE_INSTRUCTION: 'Let others scan this QR code to send you testnet USDC',
+  FOOTER_PILOT: 'Built for closed-pilot test payments',
+};
+
+// ─── Forgot PIN ───────────────────────────────────────────────────────────────
+
+export const FORGOT_PIN = {
+  TITLE: 'Reset PIN',
+  BIOMETRIC_UNAVAILABLE_TITLE: 'Biometrics Unavailable',
+  BIOMETRIC_UNAVAILABLE_DESC: 'Biometric authentication is not enabled on this device. You can restore your wallet from your cloud backup.',
+  NO_BACKUP_TITLE: 'No Biometric Backup',
+  NO_BACKUP_DESC: 'This wallet was created without biometric backup. You can restore your wallet using your cloud backup recovery password.',
+  RESTORE_CLOUD_BUTTON: 'Restore from Cloud Backup',
+};
+
+// ─── Info ─────────────────────────────────────────────────────────────────────
+
+export const INFO = {
+  ABOUT_TITLE: 'About C-Pay',
+  ABOUT_DESC_1: 'C-Pay is a closed-pilot payment app on the Stellar testnet. It lets you send and receive testnet USDC.',
+  ABOUT_DESC_2: 'Testnet USDC is for testing only. It is not real money, holds no cash value, and cannot be redeemed.',
+  TERMS_PILOT_DESC: 'C-Pay is provided for a closed pilot on the Stellar testnet. Testnet USDC is test-only, has no monetary value, and may be reset or removed at any time.',
+  SUPPORT_SEND_DESC: 'Send testnet USDC from the Home or Send screen using a C-Pay ID or by scanning a QR code. You confirm every payment with your PIN or biometrics before it is sent.',
+  SUPPORT_FAIL_DESC: 'If a payment fails, your funds are not deducted — check your connection and try again.',
+};
+
+// ─── Payment Failure ──────────────────────────────────────────────────────────
+
+export const PAYMENT_FAILURE = {
+  SUGGESTION_CLAIM_USDC: 'Claim testnet USDC for your wallet',
 };
 
 // ─── QR ───────────────────────────────────────────────────────────────────────
@@ -243,7 +299,7 @@ export const ADD_MONEY = {
   CLAIM_BUTTON: 'Claim',
   CLAIM_SUCCESS_TITLE: 'Testnet USDC Added',
   CLAIM_COOLDOWN_TITLE: 'Next Claim Available',
-  CLAIM_ERROR_TITLE: 'Credit Claim Failed',
+  CLAIM_ERROR_TITLE: 'Testnet USDC Claim Failed',
   COOLDOWN_HINT: (time: string) => `You can claim again in ${time}`,
 };
 

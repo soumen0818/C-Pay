@@ -8,6 +8,14 @@ const crypto = require('crypto');
 const StellarSdk = require('@stellar/stellar-sdk');
 const { createQuoteEngine } = require('./quote-engine');
 const { loadConfig, getPublicConfig } = require('./config');
+const {
+  assertTransactionEnvelopeXdr,
+  isTransactionEnvelopeXdr,
+  validateTransactionMemo,
+  validatePaymentTransaction: baseValidatePaymentTransaction,
+  ALLOWED_MEMO_TYPES,
+  MAX_MEMO_TEXT_BYTES,
+} = require('./paymentValidation');
 
 const app = express();
 const config = loadConfig();
@@ -394,7 +402,10 @@ app.post('/payments/submit', requireAuthenticatedUser, requireWalletOwnership(),
     });
   }
 
-  const paymentDetails = validatePaymentTransaction(innerTransaction);
+  const paymentDetails = await validatePaymentTransaction(innerTransaction, {
+    server,
+    checkDestination: config.checkDestinationTrustline,
+  });
 
   const walletAddress = innerTransaction.source;
 
@@ -1473,61 +1484,6 @@ function assertAccountId(value, label) {
   return value;
 }
 
-function assertTransactionEnvelopeXdr(value) {
-  if (typeof value !== 'string') {
-    const error = new Error('Invalid transaction XDR');
-    error.statusCode = 400;
-    error.expose = true;
-    throw error;
-  }
-
-  const trimmed = value.trim();
-  if (trimmed.length < 20 || trimmed.length > 20000) {
-    const error = new Error('Invalid transaction XDR');
-    error.statusCode = 400;
-    error.expose = true;
-    throw error;
-  }
-
-  const candidates = [trimmed];
-
-  if (/^[0-9a-fA-F]+$/.test(trimmed) && trimmed.length % 2 === 0) {
-    candidates.push(Buffer.from(trimmed, 'hex').toString('base64'));
-  }
-
-  if (/^\d+(,\d+)+$/.test(trimmed)) {
-    const bytes = trimmed.split(',').map(item => Number(item));
-    const validBytes = bytes.every(item => Number.isInteger(item) && item >= 0 && item <= 255);
-    if (validBytes) {
-      candidates.push(Buffer.from(bytes).toString('base64'));
-    }
-  }
-
-  for (const candidate of candidates) {
-    if (isTransactionEnvelopeXdr(candidate)) {
-      return candidate;
-    }
-  }
-
-  const error = new Error('Invalid transaction XDR');
-  error.statusCode = 400;
-  error.expose = true;
-  throw error;
-}
-
-function isTransactionEnvelopeXdr(value) {
-  try {
-    const envelope = StellarSdk.xdr.TransactionEnvelope.fromXDR(value, 'base64');
-    const envelopeType = envelope.switch();
-    return (
-      envelopeType === StellarSdk.xdr.EnvelopeType.envelopeTypeTx() ||
-      envelopeType === StellarSdk.xdr.EnvelopeType.envelopeTypeTxV0()
-    );
-  } catch {
-    return false;
-  }
-}
-
 function normalizeOptionalString(value) {
   return typeof value === 'string' && value.trim() ? value.trim() : '';
 }
@@ -1574,9 +1530,9 @@ async function getBalances(accountId) {
   }
 }
 
-async function getAccountStatus(accountId) {
+async function getAccountStatus(accountId, serverInstance = server) {
   try {
-    const account = await server.loadAccount(accountId);
+    const account = await serverInstance.loadAccount(accountId);
     const hasTrustline = account.balances.some(balance =>
       balance.asset_code === config.assetCode &&
       balance.asset_issuer === config.assetIssuer
@@ -2195,55 +2151,13 @@ function getStellarErrorMessage(resultCodes) {
   return '';
 }
 
-function validatePaymentTransaction(transaction) {
-  if (!transaction.source) {
-    const error = new Error('Transaction source is required');
-    error.statusCode = 400;
-    error.expose = true;
-    throw error;
-  }
-
-  if (transaction.operations.length !== 1) {
-    const error = new Error('Payment transaction must contain exactly one operation');
-    error.statusCode = 400;
-    error.expose = true;
-    throw error;
-  }
-
-  const operation = transaction.operations[0];
-  if (operation.type !== 'payment') {
-    const error = new Error('Only payment operations are accepted');
-    error.statusCode = 400;
-    error.expose = true;
-    throw error;
-  }
-
-  const operationSource = operation.source || transaction.source;
-  if (operationSource !== transaction.source) {
-    const error = new Error('Payment operation source must match transaction source');
-    error.statusCode = 400;
-    error.expose = true;
-    throw error;
-  }
-
-  assertAccountId(operation.destination, 'destination');
-  normalizeAmount(operation.amount, config.maxPaymentAmount);
-
-  if (
-    operation.asset.code !== config.assetCode ||
-    operation.asset.issuer !== config.assetIssuer
-  ) {
-    const error = new Error('Payment asset is not supported');
-    error.statusCode = 400;
-    error.expose = true;
-    throw error;
-  }
-
-  return {
-    source: transaction.source,
-    destination: operation.destination,
-    amount: operation.amount,
-  };
+async function validatePaymentTransaction(transaction, options = {}) {
+  return baseValidatePaymentTransaction(transaction, {
+    config,
+    server,
+    getAccountStatus,
+    ...options,
+  });
 }
 
 async function sendLowBalanceAlert({ sponsorXlm, distributionAsset, lowXlm, lowAsset }) {
@@ -2430,11 +2344,17 @@ module.exports = {
   keyManager,
   SupabaseRequestError,
   verifySupabaseJwt,
+  validatePaymentTransaction,
+  assertTransactionEnvelopeXdr,
+  validateTransactionMemo,
   ...(process.env.NODE_ENV === 'test' ? {
     testHooks: Object.freeze({
       keyManager,
       stellarServer: server,
       verifySupabaseJwt,
+      validatePaymentTransaction,
+      assertTransactionEnvelopeXdr,
+      validateTransactionMemo,
       getSupabasePublicKey,
       verifiedTokenCache,
       pruneVerifiedTokenCache,

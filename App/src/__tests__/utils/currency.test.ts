@@ -9,7 +9,7 @@ import {
 describe('USDC formatting', () => {
   test('uses USDC as the display currency', () => {
     expect(MONEY_UNIT_LABEL).toBe('USDC');
-    expect(formatMoneyAmount(100)).toBe('$100.00 USDC');
+    expect(formatMoneyAmount(100)).toBe('100.00 USDC');
   });
 
   test('shows cents for ordinary amounts', () => {
@@ -19,7 +19,7 @@ describe('USDC formatting', () => {
 
   test('preserves meaningful precision through seven decimals', () => {
     expect(STELLAR_AMOUNT_DECIMALS).toBe(7);
-    expect(formatMoneyAmount('0.0000001')).toBe('$0.0000001 USDC');
+    expect(formatMoneyAmount('0.0000001')).toBe('0.0000001 USDC');
     expect(formatMoneyNumber('1.2345678')).toBe('1.2345678');
   });
 
@@ -28,7 +28,7 @@ describe('USDC formatting', () => {
   });
 
   test('handles non-finite values without throwing', () => {
-    expect(formatMoneyAmount(NaN)).toBe('$0.00 USDC');
-    expect(formatMoneyAmount(Infinity)).toBe('$0.00 USDC');
+    expect(formatMoneyAmount(NaN)).toBe('0.00 USDC');
+    expect(formatMoneyAmount(Infinity)).toBe('0.00 USDC');
   });
 });
