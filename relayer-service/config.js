@@ -93,6 +93,8 @@ function loadConfig(env = process.env) {
     maxPaymentDailyAmount,
     maxPaymentDailyCount: readNumber(env, 'MAX_PAYMENT_DAILY_COUNT', 20, { integer: true, min: 0, exclusiveMin: true }),
     maxPaymentVelocityPerMinute: readNumber(env, 'MAX_PAYMENT_VELOCITY_PER_MINUTE', 10, { integer: true, min: 0, exclusiveMin: true }),
+    maxPaymentTimeboundMinutes: readNumber(env, 'MAX_PAYMENT_TIMEBOUND_MINUTES', 15, { integer: true, min: 1 }),
+    checkDestinationTrustline: readBoolean(env, 'CHECK_DESTINATION_TRUSTLINE', true),
     addMoneyCooldownMs: readNumber(env, 'ADD_MONEY_COOLDOWN_MS', 24 * 60 * 60 * 1000, { integer: true, min: 0, exclusiveMin: true }),
     idempotencyTtlMs: readNumber(env, 'IDEMPOTENCY_TTL_MS', 10 * 60 * 1000, { integer: true, min: 0, exclusiveMin: true }),
     lowXlmThreshold: readNumber(env, 'LOW_XLM_THRESHOLD', 5, { min: 0 }),
