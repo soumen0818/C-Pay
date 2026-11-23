@@ -23,6 +23,7 @@ import { Screen } from '../components';
 import { COLORS, SPACING, TYPOGRAPHY, createThemedStyles, useTheme } from '../constants/theme';
 import { AlertManager } from '../utils/alert';
 import { formatWalletFingerprint, getCPayIdByWallet } from '../utils/cpayId';
+import { isWeakPin } from '../utils/pin';
 
 const FONT_SIZES = TYPOGRAPHY.sizes;
 
@@ -119,7 +120,7 @@ export const ForgotPINScreen: React.FC<ForgotPINScreenProps> = ({ navigation }) 
 
     if (pin.length === 6) {
       // Check for weak PINs
-      if (pin === '123456' || pin === '000000' || pin === '111111' || pin === '654321') {
+      if (isWeakPin(pin)) {
         setError('Please choose a stronger PIN');
         setTimeout(() => setNewPin(''), 300);
         return;
