@@ -19,9 +19,11 @@ describe('IngestWorker', () => {
 
   let requests = [];
   let mockFetch;
+  let mockWalletBindings = [];
 
   beforeEach(() => {
     requests = [];
+    mockWalletBindings = [];
     mockFetch = jest.fn(async (url, options = {}) => {
       const urlStr = String(url);
       const method = options.method || 'GET';
@@ -34,6 +36,20 @@ describe('IngestWorker', () => {
           return makeResponse(true, 200, [{ key: DEFAULT_CURSOR_KEY, cursor: '12345-0', last_ledger: 100 }]);
         }
         return makeResponse(true, 200, { success: true });
+      }
+
+      // Wallet bindings
+      if (urlStr.includes('/rest/v1/wallet_bindings')) {
+        if (urlStr.includes('wallet_address=eq.')) {
+          const match = urlStr.match(/wallet_address=eq\.([^&]+)/);
+          const addr = match ? decodeURIComponent(match[1]) : null;
+          const found = mockWalletBindings.find(b => b.wallet_address === addr && b.is_active !== false);
+          if (found) {
+            return makeResponse(true, 200, [{ auth_user_id: found.auth_user_id }]);
+          }
+          return makeResponse(true, 200, []);
+        }
+        return makeResponse(true, 200, mockWalletBindings);
       }
 
       // Wallet cache
@@ -569,6 +585,186 @@ describe('IngestWorker', () => {
     const isLeader2After = await worker2.acquireOrRenewLeaderLease();
     expect(isLeader2After).toBe(true);
     expect(worker2.isLeader).toBe(true);
+  });
+
+  test('wallet bound after start is ingested on its next payment', async () => {
+    const worker = new IngestWorker({
+      supabaseUrl: MOCK_SUPABASE_URL,
+      supabaseServiceRoleKey: MOCK_SERVICE_ROLE_KEY,
+      fetch: mockFetch,
+    });
+
+    // Start with initial cache (GANEW_USER_WALLET is not known yet)
+    await worker.initCursor();
+    await worker.refreshWalletCache();
+    expect(worker.walletUserCache.get('GANEW_USER_WALLET')).toBeUndefined();
+
+    // User binds a new wallet to wallet_bindings
+    mockWalletBindings.push({
+      auth_user_id: 'user-new-uid',
+      wallet_address: 'GANEW_USER_WALLET',
+      is_active: true,
+    });
+
+    // Payment arrives for the newly bound wallet
+    const paymentOp = {
+      id: 'op-bound-after-start',
+      type: 'payment',
+      paging_token: '999999999-1',
+      transaction_hash: 'tx-new-bound-wallet',
+      from: 'GANEW_USER_WALLET',
+      to: 'GASTRANGER_XYZ',
+      amount: '75.0000000',
+      asset_type: 'credit_alphanum4',
+      asset_code: 'USDC',
+      created_at: '2026-08-28T14:00:00Z',
+    };
+
+    await worker.processOperation(paymentOp);
+
+    expect(worker.processedCount).toBe(1);
+    const txUpsertReq = requests.find(r => r.url.includes('/rest/v1/transactions') && r.body?.tx_hash === 'tx-new-bound-wallet');
+    expect(txUpsertReq).toBeDefined();
+    expect(txUpsertReq.body.user_id).toBe('user-new-uid');
+    expect(worker.walletUserCache.get('GANEW_USER_WALLET')).toBe('user-new-uid');
+  });
+
+  test('backfill newly bound wallet fetches payments for account from Horizon without mutating lastCursor', async () => {
+    const worker = new IngestWorker({
+      supabaseUrl: MOCK_SUPABASE_URL,
+      supabaseServiceRoleKey: MOCK_SERVICE_ROLE_KEY,
+      fetch: mockFetch,
+    });
+
+    await worker.initCursor();
+    expect(worker.lastCursor).toBe('12345-0');
+
+    // Mock Horizon payments for the account
+    const historicalOps = [
+      {
+        id: 'hist-op-1',
+        type: 'payment',
+        paging_token: '1000-1',
+        transaction_hash: 'tx-hist-1',
+        from: 'GA_EXTERNAL_SENDER',
+        to: 'GANEWLY_BOUND_ACCOUNT',
+        amount: '20.0000000',
+        asset_type: 'credit_alphanum4',
+        asset_code: 'USDC',
+        created_at: '2026-08-27T10:00:00Z',
+      },
+      {
+        id: 'hist-op-2',
+        type: 'payment',
+        paging_token: '1000-2',
+        transaction_hash: 'tx-hist-2',
+        from: 'GANEWLY_BOUND_ACCOUNT',
+        to: 'GA_EXTERNAL_RECEIVER',
+        amount: '10.0000000',
+        asset_type: 'credit_alphanum4',
+        asset_code: 'USDC',
+        created_at: '2026-08-27T11:00:00Z',
+      },
+    ];
+
+    worker.server.payments = () => ({
+      forAccount: (account) => ({
+        order: () => ({
+          limit: () => ({
+            call: async () => ({ records: historicalOps }),
+          }),
+        }),
+      }),
+    });
+
+    const result = await worker.backfillWallet('GANEWLY_BOUND_ACCOUNT', 'user-backfill-uid');
+    expect(result.processed).toBe(2);
+
+    // Global cursor must NOT have been changed by backfilling
+    expect(worker.lastCursor).toBe('12345-0');
+
+    // Both historical transactions upserted to Supabase
+    const upsertedHist1 = requests.find(r => r.url.includes('/rest/v1/transactions') && r.body?.tx_hash === 'tx-hist-1');
+    const upsertedHist2 = requests.find(r => r.url.includes('/rest/v1/transactions') && r.body?.tx_hash === 'tx-hist-2');
+    expect(upsertedHist1).toBeDefined();
+    expect(upsertedHist1.body.user_id).toBe('user-backfill-uid');
+    expect(upsertedHist2).toBeDefined();
+    expect(upsertedHist2.body.user_id).toBe('user-backfill-uid');
+  });
+
+  test('pollOnce refreshes wallet cache before processing batch', async () => {
+    const worker = new IngestWorker({
+      supabaseUrl: MOCK_SUPABASE_URL,
+      supabaseServiceRoleKey: MOCK_SERVICE_ROLE_KEY,
+      fetch: mockFetch,
+    });
+
+    await worker.initCursor();
+    // Initially cache from users
+    await worker.refreshWalletCache();
+
+    // Now wallet_bindings has a new binding
+    mockWalletBindings.push({
+      auth_user_id: 'user-batch-uid',
+      wallet_address: 'GABATCH_WALLET',
+      is_active: true,
+    });
+
+    const mockBuilder = {
+      cursor: jest.fn().mockReturnThis(),
+      call: async () => ({
+        records: [
+          {
+            id: 'batch-op-1',
+            type: 'payment',
+            paging_token: '88888-1',
+            transaction_hash: 'tx-batch-1',
+            from: 'GABATCH_WALLET',
+            to: 'GASTRANGER',
+            amount: '30.0000000',
+            asset_type: 'credit_alphanum4',
+            asset_code: 'USDC',
+            created_at: '2026-08-28T15:00:00Z',
+          },
+        ],
+      }),
+    };
+
+    worker.server.payments = () => ({
+      order: () => ({
+        limit: () => mockBuilder,
+      }),
+    });
+
+    worker.server.ledgers = () => ({
+      order: () => ({
+        limit: () => ({
+          call: async () => ({ records: [{ sequence: 200 }] }),
+        }),
+      }),
+    });
+
+    await worker.pollOnce();
+
+    expect(worker.walletUserCache.get('GABATCH_WALLET')).toBe('user-batch-uid');
+    const upserted = requests.find(r => r.url.includes('/rest/v1/transactions') && r.body?.tx_hash === 'tx-batch-1');
+    expect(upserted).toBeDefined();
+    expect(upserted.body.user_id).toBe('user-batch-uid');
+  });
+
+  test('wallet refresh timer starts and stops cleanly', async () => {
+    const worker = new IngestWorker({
+      supabaseUrl: MOCK_SUPABASE_URL,
+      supabaseServiceRoleKey: MOCK_SERVICE_ROLE_KEY,
+      fetch: mockFetch,
+      walletRefreshIntervalMs: 1000,
+    });
+
+    worker.startWalletRefreshTimer();
+    expect(worker.walletRefreshTimer).not.toBeNull();
+
+    worker.stopStreamingOrPolling();
+    expect(worker.walletRefreshTimer).toBeNull();
   });
 });
 

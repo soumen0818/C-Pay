@@ -344,7 +344,7 @@ async function loadServerModule(env = {}, { closeExisting = true } = {}) {
     SUPABASE_AUTH_FALLBACK_TO_API: 'true',
   };
 
-  const { __fetchMock, ...envOverrides } = env;
+  const { __fetchMock, ingestWorker, ...envOverrides } = env;
   if (envOverrides.RELAYER_AUTH_REQUIRED === 'false' && !envOverrides.NODE_ENV) {
     envOverrides.NODE_ENV = 'development';
   }
@@ -357,6 +357,7 @@ async function loadServerModule(env = {}, { closeExisting = true } = {}) {
   const { createApp } = require('../app.js');
   const mod = createApp({
     supabase: { fetch: fetchImpl },
+    ingestWorker,
   });
   app = mod;
   mod.app = mod;
@@ -1019,6 +1020,19 @@ describe('ownership infrastructure failures', () => {
       __fetchMock: buildFetchMock({}),
     })).rejects.toThrow(/SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY/);
     expect(activeModuleServers.size).toBe(0);
+  });
+
+  it('bindWalletToUser updates ingestWorker cache and triggers backfill', async () => {
+    const fakeIngestWorker = {
+      walletUserCache: new Map(),
+      backfillWallet: jest.fn().mockResolvedValue({ processed: 2 }),
+    };
+    const loadedApp = await loadServer({
+      ingestWorker: fakeIngestWorker,
+    });
+    await loadedApp.bindWalletToUser('user-test-bind', 'GABIND_TEST_WALLET_1');
+    expect(fakeIngestWorker.walletUserCache.get('GABIND_TEST_WALLET_1')).toBe('user-test-bind');
+    expect(fakeIngestWorker.backfillWallet).toHaveBeenCalledWith('GABIND_TEST_WALLET_1', 'user-test-bind');
   });
 });
 

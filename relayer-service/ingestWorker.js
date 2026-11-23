@@ -92,6 +92,8 @@ class IngestWorker {
     this.leaderHeartbeatTimer = null;
 
     this.maxWalletCacheSize = Number(options.maxWalletCacheSize || process.env.INGEST_WALLET_CACHE_MAX_SIZE || DEFAULT_WALLET_CACHE_MAX_SIZE);
+    this.walletRefreshIntervalMs = Number(options.walletRefreshIntervalMs || process.env.INGEST_WALLET_REFRESH_INTERVAL_MS || 60000);
+    this.walletRefreshTimer = null;
     // Bounded LRU cache of known wallet addresses to user IDs
     this.walletUserCache = new BoundedLruMap(this.maxWalletCacheSize);
     this.lastCacheRefresh = 0;
@@ -135,6 +137,7 @@ class IngestWorker {
 
       await this.initCursor();
       await this.refreshWalletCache();
+      this.startWalletRefreshTimer();
 
       if (mode === 'stream') {
         this.startStreaming();
@@ -214,6 +217,7 @@ class IngestWorker {
         try {
           await this.initCursor();
           await this.refreshWalletCache();
+          this.startWalletRefreshTimer();
           if (mode === 'stream') {
             this.startStreaming();
           } else {
@@ -233,6 +237,20 @@ class IngestWorker {
     }
   }
 
+  startWalletRefreshTimer() {
+    if (this.walletRefreshTimer) return;
+    this.walletRefreshTimer = setInterval(async () => {
+      try {
+        await this.refreshWalletCache();
+      } catch (err) {
+        console.warn('[IngestWorker] Wallet cache refresh interval error:', err.message);
+      }
+    }, this.walletRefreshIntervalMs);
+    if (this.walletRefreshTimer.unref) {
+      this.walletRefreshTimer.unref();
+    }
+  }
+
   stopStreamingOrPolling() {
     if (this.streamCloseFn) {
       try {
@@ -247,6 +265,10 @@ class IngestWorker {
     if (this.reconcileTimer) {
       clearInterval(this.reconcileTimer);
       this.reconcileTimer = null;
+    }
+    if (this.walletRefreshTimer) {
+      clearInterval(this.walletRefreshTimer);
+      this.walletRefreshTimer = null;
     }
   }
 
@@ -320,19 +342,37 @@ class IngestWorker {
     }
   }
 
-  async refreshWalletCache() {
+  async refreshWalletCache(force = false) {
     if (!this.isConfigured) return;
     try {
       const now = Date.now();
-      if (now - this.lastCacheRefresh < 60000 && this.walletUserCache.size > 0) {
+      if (!force && now - this.lastCacheRefresh < this.walletRefreshIntervalMs && this.walletUserCache.size > 0) {
         return;
       }
-      const users = await this.supabaseRequest(`users?select=id,wallet_address&limit=${this.maxWalletCacheSize}`);
-      if (Array.isArray(users)) {
+      let bindings = null;
+      try {
+        bindings = await this.supabaseRequest(
+          `wallet_bindings?is_active=eq.true&select=wallet_address,auth_user_id&limit=${this.maxWalletCacheSize}`
+        );
+      } catch (err) {
+        // Fall back to users table if wallet_bindings is unavailable
+      }
+
+      if (Array.isArray(bindings) && bindings.length > 0) {
         this.walletUserCache.clear();
-        for (const u of users) {
-          if (u.wallet_address) {
-            this.walletUserCache.set(u.wallet_address, u.id);
+        for (const b of bindings) {
+          if (b.wallet_address && b.auth_user_id) {
+            this.walletUserCache.set(b.wallet_address, b.auth_user_id);
+          }
+        }
+      } else {
+        const users = await this.supabaseRequest(`users?select=id,wallet_address&limit=${this.maxWalletCacheSize}`);
+        if (Array.isArray(users)) {
+          this.walletUserCache.clear();
+          for (const u of users) {
+            if (u.wallet_address) {
+              this.walletUserCache.set(u.wallet_address, u.id);
+            }
           }
         }
       }
@@ -352,6 +392,17 @@ class IngestWorker {
     if (!this.isConfigured) return null;
 
     try {
+      try {
+        const bindings = await this.supabaseRequest(
+          `wallet_bindings?wallet_address=eq.${encodeURIComponent(walletAddress)}&is_active=eq.true&select=auth_user_id&limit=1`
+        );
+        if (Array.isArray(bindings) && bindings.length > 0 && bindings[0].auth_user_id) {
+          const userId = bindings[0].auth_user_id;
+          this.walletUserCache.set(walletAddress, userId);
+          return userId;
+        }
+      } catch (_) {}
+
       const records = await this.supabaseRequest(
         `users?wallet_address=eq.${encodeURIComponent(walletAddress)}&select=id&limit=1`
       );
@@ -419,6 +470,8 @@ class IngestWorker {
   }
 
   async pollOnce(limit = 50) {
+    await this.refreshWalletCache();
+
     const builder = this.server.payments().order('asc').limit(limit);
     if (this.lastCursor && this.lastCursor !== 'now') {
       builder.cursor(this.lastCursor);
@@ -447,34 +500,42 @@ class IngestWorker {
     }
   }
 
-  async processOperation(operation) {
+  async processOperation(operation, { updateCursor = true } = {}) {
     if (!operation || !operation.id) return;
 
     // Filter to payment operations only (drop create_account and path payments)
     if (operation.type !== 'payment') {
-      const ledgerSeq = this.extractLedgerSequence(operation);
-      if (ledgerSeq) this.lastIngestedLedger = ledgerSeq;
-      await this.saveStoredCursor(operation.paging_token || operation.id, ledgerSeq);
+      if (updateCursor) {
+        const ledgerSeq = this.extractLedgerSequence(operation);
+        if (ledgerSeq) this.lastIngestedLedger = ledgerSeq;
+        await this.saveStoredCursor(operation.paging_token || operation.id, ledgerSeq);
+      }
       return;
     }
 
     const details = this.extractOperationDetails(operation);
     if (!details) {
-      const ledgerSeq = this.extractLedgerSequence(operation);
-      if (ledgerSeq) this.lastIngestedLedger = ledgerSeq;
-      await this.saveStoredCursor(operation.paging_token || operation.id, ledgerSeq);
+      if (updateCursor) {
+        const ledgerSeq = this.extractLedgerSequence(operation);
+        if (ledgerSeq) this.lastIngestedLedger = ledgerSeq;
+        await this.saveStoredCursor(operation.paging_token || operation.id, ledgerSeq);
+      }
       return;
     }
 
     // Filter to configured asset (do not ingest unrelated assets)
     if (details.asset_code !== this.assetCode) {
-      if (details.ledger_sequence) this.lastIngestedLedger = details.ledger_sequence;
-      await this.saveStoredCursor(operation.paging_token || operation.id, details.ledger_sequence);
+      if (updateCursor) {
+        if (details.ledger_sequence) this.lastIngestedLedger = details.ledger_sequence;
+        await this.saveStoredCursor(operation.paging_token || operation.id, details.ledger_sequence);
+      }
       return;
     }
     if (this.assetIssuer && details.asset_issuer && details.asset_issuer !== this.assetIssuer) {
-      if (details.ledger_sequence) this.lastIngestedLedger = details.ledger_sequence;
-      await this.saveStoredCursor(operation.paging_token || operation.id, details.ledger_sequence);
+      if (updateCursor) {
+        if (details.ledger_sequence) this.lastIngestedLedger = details.ledger_sequence;
+        await this.saveStoredCursor(operation.paging_token || operation.id, details.ledger_sequence);
+      }
       return;
     }
 
@@ -493,8 +554,10 @@ class IngestWorker {
 
     if (!matchedUserId) {
       // Neither party is known to the system: skip storing this transaction
-      if (details.ledger_sequence) this.lastIngestedLedger = details.ledger_sequence;
-      await this.saveStoredCursor(operation.paging_token || operation.id, details.ledger_sequence);
+      if (updateCursor) {
+        if (details.ledger_sequence) this.lastIngestedLedger = details.ledger_sequence;
+        await this.saveStoredCursor(operation.paging_token || operation.id, details.ledger_sequence);
+      }
       return;
     }
 
@@ -519,10 +582,51 @@ class IngestWorker {
     }
 
     this.processedCount++;
-    if (details.ledger_sequence) {
-      this.lastIngestedLedger = details.ledger_sequence;
+    if (updateCursor) {
+      if (details.ledger_sequence) {
+        this.lastIngestedLedger = details.ledger_sequence;
+      }
+      await this.saveStoredCursor(operation.paging_token || operation.id, details.ledger_sequence);
     }
-    await this.saveStoredCursor(operation.paging_token || operation.id, details.ledger_sequence);
+  }
+
+  async backfillWallet(walletAddress, userId = null, { maxRecords = 200 } = {}) {
+    if (!walletAddress) return { processed: 0 };
+    if (userId) {
+      this.walletUserCache.set(walletAddress, userId);
+    } else {
+      userId = await this.getUserIdForWallet(walletAddress);
+    }
+
+    let processed = 0;
+    try {
+      const builder = this.server.payments().forAccount(walletAddress).order('asc').limit(Math.min(100, maxRecords));
+      let page = await builder.call();
+      while (page && page.records && page.records.length > 0) {
+        for (const op of page.records) {
+          await this.processOperation(op, { updateCursor: false });
+          processed++;
+          if (processed >= maxRecords) break;
+        }
+        if (processed >= maxRecords || page.records.length < 100) {
+          break;
+        }
+        if (typeof page.next === 'function') {
+          page = await page.next();
+        } else {
+          break;
+        }
+      }
+    } catch (err) {
+      const status = err?.status || err?.response?.status;
+      if (status !== 404) {
+        this.errorCount++;
+        this.lastError = this.classifyError(err);
+        console.warn(`[IngestWorker] Backfill failed for wallet ${walletAddress}:`, err.message);
+        throw err;
+      }
+    }
+    return { processed };
   }
 
   extractOperationDetails(op) {
