@@ -128,6 +128,16 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({ navigation }) => {
             subtitle="PIN, biometrics, backup, wallet keys"
             onPress={() => navigation.navigate('SecurityCenter')}
           />
+          <View style={styles.divider} />
+          <ActionRow
+            style={styles.rowFlat}
+            icon="trash-outline"
+            iconColor={COLORS.error}
+            iconBackground={COLORS.error + '15'}
+            title="Delete my account"
+            subtitle="Permanently erase profile, backups, and local data"
+            onPress={handleDeleteAccount}
+          />
         </View>
       </Section>
 

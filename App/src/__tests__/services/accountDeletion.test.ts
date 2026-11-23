@@ -10,12 +10,19 @@
 import { deleteAccount } from '../../services/auth';
 import { supabase } from '../../services/supabase';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { clearWallet } from '../../services/wallet';
 
 jest.mock('../../services/supabase', () => ({
   supabase: {
     rpc: jest.fn(),
     auth: {
       signOut: jest.fn().mockResolvedValue({ error: null }),
+      getUser: jest.fn().mockResolvedValue({ data: { user: { id: 'test-user-id' } }, error: null }),
+    },
+    storage: {
+      from: jest.fn().mockReturnValue({
+        remove: jest.fn().mockResolvedValue({ data: null, error: null }),
+      }),
     },
     removeAllChannels: jest.fn().mockResolvedValue(true),
   },
@@ -27,6 +34,7 @@ jest.mock('../../services/transactionMonitor', () => ({
 
 jest.mock('../../services/wallet', () => ({
   clearSessionPin: jest.fn(),
+  clearWallet: jest.fn().mockResolvedValue(undefined),
 }));
 
 describe('deleteAccount service (#228)', () => {
@@ -44,7 +52,9 @@ describe('deleteAccount service (#228)', () => {
     await deleteAccount();
 
     expect(supabase.rpc).toHaveBeenCalledWith('delete_my_account');
+    expect(supabase.storage.from).toHaveBeenCalledWith('profile-images');
     expect(supabase.auth.signOut).toHaveBeenCalled();
+    expect(clearWallet).toHaveBeenCalled();
 
     const address = await AsyncStorage.getItem('wallet_address');
     const pin = await AsyncStorage.getItem('wallet_pin');

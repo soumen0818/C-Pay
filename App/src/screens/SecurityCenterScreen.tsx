@@ -39,6 +39,7 @@ import { formatMoneyAmount } from '../utils/currency';
 import { COLORS, SPACING, FONT_SIZES, BORDER_RADIUS, SHADOWS, createThemedStyles, useTheme } from '../constants/theme';
 import { Screen, Header, Section, ActionRow, InfoBanner } from '../components';
 import { AlertManager } from '../utils/alert';
+import { deleteAccount } from '../services/auth';
 
 type ExportedKey = {
   title: string;
@@ -293,6 +294,39 @@ export const SecurityCenterScreen: React.FC<SecurityCenterScreenProps> = ({ navi
         ? 'iOS cannot block screenshots. Screen recording is blocked, and you will be warned if a screenshot is taken. Do not screenshot this key.'
         : 'Screenshot protection is unavailable on this device. Do not screenshot or screen-record this key.';
 
+  const handleDeleteAccount = () => {
+    AlertManager.alert(
+      'Delete Account',
+      'Are you sure you want to permanently delete your account? This action removes your profile, C-Pay ID, cloud backup, and all server data. This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete Account',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteAccount();
+              AlertManager.alert('Account Deleted', 'Your account has been deleted successfully.', [
+                {
+                  text: 'OK',
+                  onPress: () =>
+                    navigation.reset({
+                      index: 0,
+                      routes: [{ name: 'Splash' }],
+                    }),
+                },
+              ]);
+            } catch {
+              AlertManager.alert('Delete Failed', 'Unable to delete account. Please try again.', undefined, {
+                type: 'error',
+              });
+            }
+          },
+        },
+      ]
+    );
+  };
+
   return (
     <Screen header={<Header title="Security Center" onBack={() => navigation.goBack()} />}>
       <InfoBanner
@@ -408,6 +442,21 @@ export const SecurityCenterScreen: React.FC<SecurityCenterScreenProps> = ({ navi
             title="Auto-lock"
             subtitle={`Wallet locks after ${SESSION_TIMEOUT_MINUTES} minutes of inactivity`}
             showChevron={false}
+          />
+        </View>
+      </Section>
+
+      {/* Account & data */}
+      <Section title="Account & data">
+        <View style={styles.card}>
+          <ActionRow
+            style={styles.rowFlat}
+            icon="trash-outline"
+            iconColor={COLORS.error}
+            iconBackground={COLORS.error + '15'}
+            title="Delete my account"
+            subtitle="Permanently erase your account, cloud backup, and data"
+            onPress={handleDeleteAccount}
           />
         </View>
       </Section>
