@@ -38,6 +38,13 @@ describe('IngestWorker', () => {
 
       // Wallet cache
       if (urlStr.includes('/rest/v1/users')) {
+        if (urlStr.includes('wallet_address=eq.')) {
+          const match = urlStr.match(/wallet_address=eq\.([^&]+)/);
+          const addr = match ? decodeURIComponent(match[1]) : null;
+          if (addr === 'GAKNOWN_WALLET_1') return makeResponse(true, 200, [{ id: 'user-1-uid' }]);
+          if (addr === 'GAKNOWN_WALLET_2') return makeResponse(true, 200, [{ id: 'user-2-uid' }]);
+          return makeResponse(true, 200, []);
+        }
         return makeResponse(true, 200, [
           { id: 'user-1-uid', wallet_address: 'GAKNOWN_WALLET_1' },
           { id: 'user-2-uid', wallet_address: 'GAKNOWN_WALLET_2' },
@@ -146,7 +153,7 @@ describe('IngestWorker', () => {
       to: 'GASTRANGER_2',
       amount: '10.0000000',
       asset_type: 'credit_alphanum4',
-      asset_code: 'CPINR',
+      asset_code: 'USDC',
       created_at: '2026-08-28T12:05:00Z',
     };
 
@@ -183,7 +190,7 @@ describe('IngestWorker', () => {
       to: 'GASTRANGER_A',
       amount: '15.0000000',
       asset_type: 'credit_alphanum4',
-      asset_code: 'CPINR',
+      asset_code: 'USDC',
       created_at: '2026-08-28T12:10:00Z',
     };
 
@@ -196,7 +203,7 @@ describe('IngestWorker', () => {
       to: 'GASTRANGER_B',
       amount: '25.0000000',
       asset_type: 'credit_alphanum4',
-      asset_code: 'CPINR',
+      asset_code: 'USDC',
       created_at: '2026-08-28T12:10:00Z',
     };
 
@@ -238,7 +245,7 @@ describe('IngestWorker', () => {
       to: 'GAUNKNOWN_WALLET',
       amount: '10.0000000',
       asset_type: 'credit_alphanum4',
-      asset_code: 'CPINR',
+      asset_code: 'USDC',
       created_at: '2026-08-28T12:00:00Z',
     };
 
@@ -278,7 +285,7 @@ describe('IngestWorker', () => {
       to: 'GAUNKNOWN_WALLET',
       amount: '50.0000000',
       asset_type: 'credit_alphanum4',
-      asset_code: 'CPINR',
+      asset_code: 'USDC',
       created_at: '2026-08-28T12:00:00Z',
     };
 
