@@ -5,6 +5,8 @@ import { View, Text, StyleSheet, Linking } from 'react-native';
 import { COLORS, SPACING, FONT_SIZES, createThemedStyles, useTheme } from '../constants/theme';
 import { Screen, Header, Button, InfoBanner } from '../components';
 import { AlertManager } from '../utils/alert';
+import { APP_VERSION } from '../utils/version';
+import { INFO } from '../utils/strings';
 
 export type InfoDoc = 'privacy' | 'terms' | 'about' | 'support';
 
@@ -14,7 +16,6 @@ interface InfoScreenProps {
 }
 
 const SUPPORT_EMAIL = 'support@cpay.app';
-const APP_VERSION = '1.0.3';
 
 type Block =
   | { type: 'heading'; text: string }
@@ -22,11 +23,11 @@ type Block =
 
 const CONTENT: Record<InfoDoc, { title: string; blocks: Block[] }> = {
   about: {
-    title: 'About C-Pay',
+    title: INFO.ABOUT_TITLE,
     blocks: [
       { type: 'paragraph', text: `C-Pay v${APP_VERSION}` },
-      { type: 'paragraph', text: 'C-Pay is a closed-pilot payment app that uses test credits on the Stellar testnet. It lets you send and receive pilot credits.' },
-      { type: 'paragraph', text: 'Pilot credits are for testing only. They are not real money, hold no cash value, and cannot be redeemed.' },
+      { type: 'paragraph', text: INFO.ABOUT_DESC_1 },
+      { type: 'paragraph', text: INFO.ABOUT_DESC_2 },
       { type: 'paragraph', text: '© 2026 C-Pay. All rights reserved.' },
     ],
   },
@@ -51,7 +52,7 @@ const CONTENT: Record<InfoDoc, { title: string; blocks: Block[] }> = {
     title: 'Terms of Service',
     blocks: [
       { type: 'heading', text: 'Pilot program' },
-      { type: 'paragraph', text: 'C-Pay is provided for a closed pilot on the Stellar testnet. Pilot credits are test-only, have no monetary value, and may be reset or removed at any time.' },
+      { type: 'paragraph', text: INFO.TERMS_PILOT_DESC },
       { type: 'heading', text: 'Your responsibilities' },
       { type: 'paragraph', text: 'You are responsible for keeping your PIN, recovery password, and exported keys private. Anyone with these can control your wallet. C-Pay cannot reverse payments or recover lost keys.' },
       { type: 'heading', text: 'No warranty' },
@@ -64,11 +65,11 @@ const CONTENT: Record<InfoDoc, { title: string; blocks: Block[] }> = {
     title: 'Help & Support',
     blocks: [
       { type: 'heading', text: 'Getting started' },
-      { type: 'paragraph', text: 'Send credits from the Home or Send screen using a C-Pay ID or by scanning a QR code. You confirm every payment with your PIN or biometrics before it is sent.' },
+      { type: 'paragraph', text: INFO.SUPPORT_SEND_DESC },
       { type: 'heading', text: 'Recovering your wallet' },
       { type: 'paragraph', text: 'Set up cloud backup in the Security Center so you can restore your wallet on a new device with your recovery password. You can also export your secret key as a backup.' },
       { type: 'heading', text: 'Common issues' },
-      { type: 'paragraph', text: 'If a payment fails, your credits are not deducted — check your connection and try again.' },
+      { type: 'paragraph', text: INFO.SUPPORT_FAIL_DESC },
     ],
   },
 };
