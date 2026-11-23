@@ -246,3 +246,91 @@ export const ADD_MONEY = {
   CLAIM_ERROR_TITLE: 'Credit Claim Failed',
   COOLDOWN_HINT: (time: string) => `You can claim again in ${time}`,
 };
+
+// ─── Info & Legal Documents ───────────────────────────────────────────────────
+
+export type InfoDoc = 'privacy' | 'terms' | 'about' | 'support';
+
+export interface InfoBlock {
+  type: 'heading' | 'paragraph';
+  text: string;
+}
+
+export interface InfoDocument {
+  title: string;
+  blocks: InfoBlock[];
+}
+
+export const INFO_SUPPORT_EMAIL = 'support@cpay.app';
+
+export const INFO_DOCS: Record<InfoDoc, InfoDocument> = {
+  about: {
+    title: 'About C-Pay',
+    blocks: [
+      { type: 'paragraph', text: 'C-Pay v1.0.3' },
+      { type: 'paragraph', text: 'C-Pay is a closed-pilot payment app built on the Stellar testnet. It provides fast, simple UPI-style test payments using testnet USDC.' },
+      { type: 'paragraph', text: 'Testnet USDC is for testing only. It is not real money, holds no cash value, and cannot be redeemed for fiat or legal tender.' },
+      { type: 'paragraph', text: '© 2026 C-Pay. All rights reserved.' },
+    ],
+  },
+  privacy: {
+    title: 'Privacy Policy',
+    blocks: [
+      { type: 'heading', text: 'Overview' },
+      { type: 'paragraph', text: 'C-Pay is built with local-first security and privacy by design. Your private keys and PIN are encrypted directly on your device and are never sent to our servers in plaintext. This policy details all data stored, third-party processors, retention periods, and your rights to delete your data.' },
+
+      { type: 'heading', text: 'Stored Fields & Data' },
+      { type: 'paragraph', text: 'When you create an account and transact on C-Pay, the following data is collected and stored:\n• Account & Identity: Your verified email address, user-chosen display name, unique C-Pay ID, and Stellar wallet public key (wallet_address).\n• Profile Photos (Public Storage URLs): If you choose to upload a profile photo, the image file is uploaded to a public storage bucket (profile-images) under your account folder (<auth.uid>/avatar.jpg). Public URLs are generated so your avatar can be rendered seamlessly across peer transfers, recipient confirmation, and contact discovery without signature expiration. Row-level security strictly ensures only you can upload, overwrite, or delete your own profile photo.\n• Payment & Transfer Records: Transaction records stored in our database include transaction hashes, sender and recipient Stellar wallet addresses, display names, transfer amounts, payment status, sequence numbers, timestamps, and any optional payment notes/memos entered by the sender.\n• Encrypted Cloud Backups: If you set up cloud backup, an encrypted ciphertext of your wallet secret key, alongside cryptographic salt, algorithm metadata, and KDF parameters, is stored in our database. Cloud backups are encrypted client-side with a recovery password only you know; C-Pay servers cannot decrypt your secret key.\n• Local Device Data: Your encrypted wallet secret, PIN verifier hash, attempt lockout counters, biometric credentials, and local transaction caches are stored securely on your device using SecureStore and AsyncStorage.' },
+
+      { type: 'heading', text: 'Third-Party Data Processors' },
+      { type: 'paragraph', text: 'C-Pay uses the following third-party infrastructure providers to operate the application:\n• Supabase Inc.: Provides hosted PostgreSQL database services, user authentication (email OTP verification), and object storage for profile avatars.\n• Relayer Hosting Infrastructure (Render / Cloud Host): Hosts the relayer API proxy that provides transaction fee sponsorship and relaying. The relayer processes incoming request metadata, client IP addresses, user agents, and diagnostic server logs to enforce rate limits, prevent DDoS abuse, and monitor system health.\n• Stellar Development Foundation (SDF) & Horizon Nodes: Operates the public Stellar testnet validator nodes that process and commit transactions to the public ledger.' },
+
+      { type: 'heading', text: 'Public Blockchain Ledger' },
+      { type: 'paragraph', text: 'Payments are recorded on the public Stellar testnet blockchain. Transaction amounts, sender and recipient wallet public addresses, transaction hashes, and ledger timestamps are publicly and permanently visible on-chain to any block explorer.' },
+
+      { type: 'heading', text: 'Data Retention Periods' },
+      { type: 'paragraph', text: '• Account and Profile Data: Your email, display name, C-Pay ID, profile photo, and encrypted backups are retained only for the active lifetime of your account. They are immediately purged when you delete your account.\n• Relayer Server Logs: Client IP addresses and diagnostic HTTP request logs are retained for up to 30 days by the hosting infrastructure for abuse prevention, rate-limiting, and error diagnosis, after which they are automatically rotated and discarded.\n• Public Blockchain Records: On-chain transactions committed to the Stellar testnet ledger are immutable on the blockchain ledger (subject only to periodic testnet ledger resets by SDF).' },
+
+      { type: 'heading', text: 'Data Deletion (Your Rights)' },
+      { type: 'paragraph', text: 'You have the right to permanently delete your account and all associated data at any time directly in the app:\n1. Open Profile.\n2. Tap Security (or Security Center).\n3. Tap "Delete my account".\n\nWhen you delete your account:\n• The delete_my_account database routine permanently deletes your account and cascades removal of your profile, verified email, C-Pay ID, payment records, and encrypted cloud backups from our servers.\n• Your uploaded avatar is deleted from the public storage bucket.\n• All local wallet secrets, PIN verifiers, biometric credentials, and cached data are completely wiped from your device.' },
+
+      { type: 'heading', text: 'Contact & Monitored Support' },
+      { type: 'paragraph', text: 'For privacy inquiries, account questions, or data deletion support, email support@cpay.app. The support@cpay.app domain is designated for C-Pay pilot communications and actively monitored by the C-Pay team.' },
+    ],
+  },
+  terms: {
+    title: 'Terms of Service',
+    blocks: [
+      { type: 'heading', text: 'Closed Pilot Program' },
+      { type: 'paragraph', text: 'C-Pay is provided as an experimental closed-pilot payment application on the Stellar testnet. All balances are in testnet USDC. Test assets have no monetary value, cannot be redeemed for cash or legal tender, and are provided solely for pilot testing.' },
+
+      { type: 'heading', text: 'Fee Sponsorship' },
+      { type: 'paragraph', text: 'Stellar network transaction fees are sponsored by C-Pay as a pilot courtesy to provide a seamless UPI-like experience. C-Pay reserves the right to enforce rate limits, velocity checks, and daily quotas, or suspend sponsorship during high network congestion or maintenance.' },
+
+      { type: 'heading', text: 'Non-Reversible Payments' },
+      { type: 'paragraph', text: 'All payments settle on the Stellar blockchain and are final. C-Pay cannot reverse, cancel, charge back, or refund payments once submitted to the network. You are responsible for verifying recipient C-Pay IDs and amounts before confirming.' },
+
+      { type: 'heading', text: 'Pilot Resets and Discontinuation' },
+      { type: 'paragraph', text: 'Because C-Pay operates on the Stellar testnet, network states, ledger history, and wallet balances may be reset, altered, or wiped at any time during testnet network resets or pilot upgrades. C-Pay is provided “as is” without warranties of any kind.' },
+
+      { type: 'heading', text: 'User Responsibilities' },
+      { type: 'paragraph', text: 'You are responsible for safeguarding your 6-digit PIN, cloud recovery password, and any exported secret keys. Anyone with access to your device PIN or recovery keys can authorize transfers. C-Pay cannot recover lost PINs or lost passwords.' },
+
+      { type: 'heading', text: 'Contact' },
+      { type: 'paragraph', text: 'Questions about these terms? Contact us at support@cpay.app.' },
+    ],
+  },
+  support: {
+    title: 'Help & Support',
+    blocks: [
+      { type: 'heading', text: 'Getting Started' },
+      { type: 'paragraph', text: 'Send testnet USDC from the Home or Send screen by entering a C-Pay ID or scanning a QR code. Confirm every payment with your PIN or biometrics before it is signed.' },
+
+      { type: 'heading', text: 'Wallet Recovery' },
+      { type: 'paragraph', text: 'Set up cloud backup in the Security Center with a strong recovery password to restore your wallet on a new device. You can also export your secret key from Security Center.' },
+
+      { type: 'heading', text: 'Common Issues' },
+      { type: 'paragraph', text: 'If a payment fails, your balance is not deducted. Check your internet connection and try again.' },
+    ],
+  },
+};
