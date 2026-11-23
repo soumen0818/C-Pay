@@ -582,15 +582,19 @@ class IngestWorker {
   }
 
   extractLedgerSequence(op) {
+    if (!op) return null;
     if (op.transaction_attr && op.transaction_attr.ledger) {
-      return op.transaction_attr.ledger;
+      return Number(op.transaction_attr.ledger);
+    }
+    if (op.ledger) {
+      return Number(op.ledger);
     }
     const raw = op.paging_token || op.id;
     if (raw) {
       try {
         const str = String(raw).split('-')[0];
         const bigToken = BigInt(str);
-        const ledger = Number(bigToken >> 24n);
+        const ledger = Number(bigToken >> 32n);
         if (ledger > 0) return ledger;
         if (str.length <= 10) {
           const direct = Number(str);

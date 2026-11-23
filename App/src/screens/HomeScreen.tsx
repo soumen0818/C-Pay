@@ -29,6 +29,7 @@ import {
 } from '../utils/currency';
 import { PILOT_NOTICE_TEXT, PILOT_NOTICE_TITLE } from '../utils/pilot';
 import { usePaymentIntent } from '../hooks/usePaymentIntent';
+import { A11Y, HOME as HOME_STRINGS } from '../utils/strings';
 import {
   LoadingSpinner,
   TransactionItem,
@@ -87,17 +88,17 @@ const getRetryAfterSecondsFromError = (error: unknown): number => {
 
 const getAddMoneyCooldownMessage = (retryAfterSeconds: number): string => {
   if (retryAfterSeconds > 0) {
-    return `You can claim pilot credits again in ${formatTimeRemaining(retryAfterSeconds)}.`;
+    return HOME_STRINGS.CLAIM_COOLDOWN(formatTimeRemaining(retryAfterSeconds));
   }
 
-  return 'Pilot credits are available now. You can claim again.';
+  return HOME_STRINGS.CLAIM_AVAILABLE;
 };
 
 const getAddMoneyErrorMessage = (error: unknown): string => {
   const addMoneyError = error as Partial<AddMoneyError>;
   const message = typeof addMoneyError.message === 'string'
     ? addMoneyError.message
-    : 'Failed to claim pilot credits';
+    : HOME_STRINGS.CLAIM_FAILED_FALLBACK;
   const lowerMessage = message.toLowerCase();
   const code = addMoneyError.code || '';
   const retryAfterSeconds = getNormalizedRetryAfterSeconds(addMoneyError.retryAfterSeconds);
@@ -107,23 +108,23 @@ const getAddMoneyErrorMessage = (error: unknown): string => {
       return getAddMoneyCooldownMessage(retryAfterSeconds);
     }
 
-    return 'Please wait 24 hours between pilot credit claims.';
+    return HOME_STRINGS.CLAIM_WAIT_24H;
   }
 
   if (code === 'DISTRIBUTION_LOW_ASSET' || (lowerMessage.includes('insufficient') && lowerMessage.includes('usdc'))) {
-    return 'Pilot credit claims are temporarily unavailable because the relayer distribution account has no test asset balance.';
+    return HOME_STRINGS.CLAIM_DISTRIBUTION_EMPTY;
   }
 
   if (code === 'ACCOUNT_NOT_READY') {
-    return 'Wallet setup could not finish yet. Please try again in a few seconds.';
+    return HOME_STRINGS.CLAIM_ACCOUNT_NOT_READY;
   }
 
   if (code === 'ADD_MONEY_DISABLED') {
-    return 'Pilot credit claims are disabled for this network.';
+    return HOME_STRINGS.CLAIM_DISABLED_NETWORK;
   }
 
   if (code === 'WALLET_OWNERSHIP_DENIED') {
-    return 'Your wallet does not match your account. Sign out, sign back in, and try again.';
+    return HOME_STRINGS.CLAIM_WALLET_OWNERSHIP_DENIED;
   }
 
   if (code === 'RELAYER_TIMEOUT' || lowerMessage.includes('taking too long')) {
@@ -144,21 +145,21 @@ const getAddMoneyErrorMessage = (error: unknown): string => {
 const getAddMoneyTitle = (phase: AddMoneyPhase): string => {
   switch (phase) {
     case 'checking':
-      return 'Checking Claim';
+      return HOME_STRINGS.CLAIM_CHECKING;
     case 'confirm':
-      return 'Claim Pilot Credits';
+      return HOME_STRINGS.CLAIM_BUTTON;
     case 'authenticating':
-      return 'Authentication Required';
+      return HOME_STRINGS.CLAIM_AUTH_REQUIRED;
     case 'processing':
-      return 'Claiming Credits';
+      return HOME_STRINGS.CLAIM_BUTTON_CLAIMING;
     case 'success':
-      return 'Credits Added';
+      return HOME_STRINGS.CLAIM_BUTTON_SUCCESS;
     case 'cooldown':
       return 'Next Claim Available';
     case 'error':
-      return 'Credit Claim Failed';
+      return HOME_STRINGS.CLAIM_BUTTON_FAILED;
     default:
-      return 'Claim Pilot Credits';
+      return HOME_STRINGS.CLAIM_BUTTON;
   }
 };
 
@@ -566,7 +567,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
           onPress={handleSendMoney}
           activeOpacity={0.8}
           accessibilityRole="button"
-          accessibilityLabel="Send credits"
+          accessibilityLabel={A11Y.SEND_USDC}
           accessibilityHint="Go to send money screen"
         >
           <View
@@ -577,7 +578,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
             <Ionicons name="send-outline" size={23} color={COLORS.primary} />
           </View>
           <Text style={styles.actionTitle} importantForAccessibility="no-hide-descendants">
-            Send Credits
+            {HOME_STRINGS.SEND_USDC}
           </Text>
         </TouchableOpacity>
 
@@ -676,7 +677,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
         currentWallet={walletAddress}
       />
 
-      {/* Add-money / claim credits status flow */}
+      {/* Add-money / claim testnet USDC status flow */}
       <StatusSheet
         visible={addMoneyPhase !== 'idle'}
         variant={statusVariant}
