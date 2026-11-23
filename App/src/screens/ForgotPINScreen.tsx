@@ -59,19 +59,39 @@ export const ForgotPINScreen: React.FC<ForgotPINScreenProps> = ({ navigation }) 
       
       if (!available) {
         AlertManager.alert(
-          'Biometric Not Available',
-          'Your device does not have biometric authentication enabled. PIN recovery is not available.',
-          [{ text: 'OK', onPress: () => navigation.goBack() }]
+          FORGOT_PIN.BIOMETRIC_UNAVAILABLE_TITLE,
+          FORGOT_PIN.BIOMETRIC_UNAVAILABLE_DESC,
+          [
+            { text: FORGOT_PIN.RESTORE_CLOUD_BUTTON, onPress: handleCloudRestore },
+            { text: 'Cancel', style: 'cancel', onPress: () => navigation.goBack() },
+          ]
         );
       } else if (!backup) {
         AlertManager.alert(
-          'No Backup Available',
-          'This wallet was created without biometric backup. PIN recovery is not available.\n\nYou will need to reset the app and create a new wallet.',
-          [{ text: 'OK', onPress: () => navigation.goBack() }]
+          FORGOT_PIN.NO_BACKUP_TITLE,
+          FORGOT_PIN.NO_BACKUP_DESC,
+          [
+            { text: FORGOT_PIN.RESTORE_CLOUD_BUTTON, onPress: handleCloudRestore },
+            { text: 'Cancel', style: 'cancel', onPress: () => navigation.goBack() },
+          ]
         );
       }
     } catch (error) {
       Logger.error('Error checking availability:', error);
+    }
+  };
+
+  const handleCloudRestore = async () => {
+    try {
+      const walletAddress = (await AsyncStorage.getItem('wallet_address')) || '';
+      const { data } = await supabase.auth.getUser();
+      navigation.navigate('RestoreWallet', {
+        walletAddress,
+        verifiedEmail: data.user?.email || undefined,
+        accountSwitch: true,
+      });
+    } catch {
+      navigation.navigate('RestoreWallet', { walletAddress: '', accountSwitch: true });
     }
   };
 
@@ -310,6 +330,17 @@ export const ForgotPINScreen: React.FC<ForgotPINScreenProps> = ({ navigation }) 
         </TouchableOpacity>
 
         <TouchableOpacity
+          style={styles.cloudRestoreButton}
+          onPress={handleCloudRestore}
+          disabled={loading}
+        >
+          <Ionicons name="cloud-download-outline" size={20} color={COLORS.primary} style={styles.buttonIcon} />
+          <Text style={styles.cloudRestoreButtonText}>
+            {FORGOT_PIN.RESTORE_CLOUD_BUTTON}
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
           style={styles.cancelButton}
           onPress={() => navigation.goBack()}
         >
@@ -419,6 +450,23 @@ const styles = createThemedStyles((COLORS) => ({
   },
   buttonText: {
     color: COLORS.textInverse,
+    fontSize: FONT_SIZES.md,
+    fontWeight: '600',
+  },
+  cloudRestoreButton: {
+    flexDirection: 'row',
+    backgroundColor: 'transparent',
+    borderWidth: 1,
+    borderColor: COLORS.primary,
+    paddingVertical: SPACING.md,
+    paddingHorizontal: SPACING.lg,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: SPACING.md,
+  },
+  cloudRestoreButtonText: {
+    color: COLORS.primary,
     fontSize: FONT_SIZES.md,
     fontWeight: '600',
   },

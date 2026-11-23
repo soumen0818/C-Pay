@@ -27,6 +27,7 @@ import {
 import { AlertManager } from '../utils/alert';
 import { MONEY_SYMBOL, MONEY_UNIT_LABEL, formatMoneyAmount, formatMoneyBalance } from '../utils/currency';
 import { PILOT_TESTNET_TEXT } from '../utils/pilot';
+import { PAYMENT } from '../utils/strings';
 import { usePaymentIntent } from '../hooks/usePaymentIntent';
 import { usePaymentSubmission } from '../hooks/usePaymentSubmission';
 import { useRecipientLookup } from '../hooks/useRecipientLookup';
@@ -166,7 +167,7 @@ export const SendMoneyScreen: React.FC<SendMoneyScreenProps> = ({ navigation, ro
     }
 
     if (recipientAddress.trim() === walletAddress) {
-      AlertManager.alert('Invalid Recipient', 'You cannot send pilot credits to yourself');
+      AlertManager.alert('Invalid Recipient', PAYMENT.CANNOT_SEND_TO_SELF);
       return false;
     }
 
@@ -295,7 +296,7 @@ export const SendMoneyScreen: React.FC<SendMoneyScreenProps> = ({ navigation, ro
         <FormField
           label="Recipient C-Pay ID"
           containerStyle={styles.field}
-          placeholder="name@cpayk8f3qz"
+          placeholder={PAYMENT.RECIPIENT_PLACEHOLDER}
           value={recipientInput}
           onChangeText={handleAddressChange}
           autoCapitalize="none"

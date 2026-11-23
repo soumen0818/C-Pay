@@ -11,6 +11,7 @@ import { AlertManager } from '../../utils/alert';
 import { getMediaLibraryDownloadErrorMessage, requestPhotoSavePermission } from '../../utils/mediaLibrary';
 import { InitialAvatar } from '../InitialAvatar';
 import { Logger } from '../../utils/logger';
+import { PROFILE } from '../../utils/strings';
 
 interface ProfileQRCodeProps {
   profilePhoto: string | null;
@@ -38,7 +39,7 @@ export const ProfileQRCode: React.FC<ProfileQRCodeProps> = ({
       if (await Sharing.isAvailableAsync()) {
         await Sharing.shareAsync(uri, {
           mimeType: 'image/png',
-          dialogTitle: 'Scan this QR code to send me pilot credits on C-Pay.',
+          dialogTitle: PROFILE.QR_DIALOG_TITLE,
           UTI: 'public.png',
         });
       } else {
@@ -107,12 +108,12 @@ export const ProfileQRCode: React.FC<ProfileQRCodeProps> = ({
                 </View>
 
                 <View style={styles.shareCardFooter}>
-                  <Text style={styles.shareCardFooterText}>Scan to send pilot credits</Text>
+                  <Text style={styles.shareCardFooterText}>{PROFILE.QR_SHARE_CARD_FOOTER}</Text>
                 </View>
               </View>
             </ViewShot>
             <Text style={styles.qrCodeDescription}>
-              Let others scan this QR code to send you pilot credits
+              {PROFILE.QR_SHARE_INSTRUCTION}
             </Text>
 
             <View style={styles.qrActionButtons}>
