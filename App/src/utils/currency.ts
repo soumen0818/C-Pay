@@ -21,7 +21,7 @@ export function formatMoneyNumber(amount: string | number): string {
 }
 
 export function formatMoneyAmount(amount: string | number): string {
-  return `$${formatMoneyNumber(amount)} USDC`;
+  return `${formatMoneyNumber(amount)} USDC`;
 }
 
 export function formatMoneyBalance(amount: string | number): string {

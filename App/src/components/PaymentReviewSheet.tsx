@@ -21,7 +21,7 @@ export interface PaymentReviewSheetProps {
   recipientName?: string;
   /** C-Pay ID or wallet fingerprint shown under the name. */
   cpayId: string;
-  /** Amount in the user-visible credit unit, as a string. */
+  /** Amount in user-visible USDC units, as a string. */
   amount: string;
   note?: string;
   /** Stellar network id (defaults to the configured network). */
