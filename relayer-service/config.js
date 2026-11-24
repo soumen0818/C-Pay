@@ -126,6 +126,7 @@ function loadConfig(env = process.env) {
     ledgerIngestEnabled: readBoolean(env, 'LEDGER_INGEST_ENABLED', true),
     ingestPollIntervalMs: readNumber(env, 'INGEST_POLL_INTERVAL_MS', 5000, { integer: true, min: 0, exclusiveMin: true }),
     ingestPendingTimeoutMs: readNumber(env, 'INGEST_PENDING_TIMEOUT_MS', 300000, { integer: true, min: 0, exclusiveMin: true }),
+    ingestWalletRefreshIntervalMs: readNumber(env, 'INGEST_WALLET_REFRESH_INTERVAL_MS', 60000, { integer: true, min: 0, exclusiveMin: true }),
     ingestStartCursor: optionalString(env.INGEST_START_CURSOR) || null,
     quotesEnabled: readBoolean(env, 'ENABLE_QUOTES_API', false),
     quoteSignatureSecret: optionalString(env.QUOTE_SIGNATURE_SECRET) || '',

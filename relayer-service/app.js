@@ -108,6 +108,7 @@ function createApp(options = {}) {
     supabaseServiceRoleKey: config.supabaseServiceRoleKey || '',
     pollIntervalMs: config.ingestPollIntervalMs || 5000,
     pendingTimeoutMs: config.ingestPendingTimeoutMs || 300000,
+    walletRefreshIntervalMs: config.ingestWalletRefreshIntervalMs || 60000,
     startCursor: config.ingestStartCursor || null,
   });
 
@@ -973,6 +974,18 @@ async function bindWalletToUser(authUserId, walletAddress) {
       });
     }
     throw error;
+  }
+
+  // Update ingest worker cache immediately and trigger backfill for newly bound wallet
+  if (ingestWorker) {
+    if (ingestWorker.walletUserCache && typeof ingestWorker.walletUserCache.set === 'function') {
+      ingestWorker.walletUserCache.set(walletAddress, authUserId);
+    }
+    if (typeof ingestWorker.backfillWallet === 'function') {
+      ingestWorker.backfillWallet(walletAddress, authUserId).catch((err) => {
+        console.warn(`[IngestWorker] Backfill error for ${walletAddress}:`, err.message);
+      });
+    }
   }
 }
 
@@ -2380,6 +2393,7 @@ async function resetLowBalanceAlert(condition = 'low-balance') {
   app.cleanExpiredPersistedState = cleanExpiredPersistedState;
   app.checkLowBalanceAlerts = checkLowBalanceAlerts;
   app.assertWalletBindingsReachable = assertWalletBindingsReachable;
+  app.bindWalletToUser = bindWalletToUser;
   app.app = app;
 
   return app;
