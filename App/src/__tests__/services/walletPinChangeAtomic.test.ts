@@ -113,13 +113,14 @@ describe('Atomic PIN change & recovery (issue #119)', () => {
     const publicKey = await wallet.createWallet(OLD_PIN);
 
     // Perform PIN change but intercept before cleanup can delete PENDING_SLOT_KEY
-    const origDelete = SecureStoreMock.deleteItemAsync;
-    jest.spyOn(SecureStoreMock, 'deleteItemAsync').mockImplementation(async (key) => {
-      if (key === wallet.PENDING_SLOT_KEY) {
+    let failPendingSlotDelete = true;
+    SecureStoreMock.deleteItemAsync.mockImplementation(async (key: string) => {
+      if (failPendingSlotDelete && key === wallet.PENDING_SLOT_KEY) {
+        failPendingSlotDelete = false;
         // Simulate process killed here
         throw new Error('Process killed mid-cleanup');
       }
-      return origDelete(key);
+      delete SecureStoreMock.__store[key];
     });
 
     try {
@@ -127,8 +128,6 @@ describe('Atomic PIN change & recovery (issue #119)', () => {
     } catch {
       // Expected kill
     }
-
-    jest.restoreAllMocks();
 
     // Pointer was already flipped to '1', but PENDING_SLOT_KEY='1' remains
     expect(await SecureStoreMock.getItemAsync(wallet.ACTIVE_SLOT_KEY)).toBe('1');
@@ -208,17 +207,16 @@ describe('Atomic PIN change & recovery (issue #119)', () => {
     await wallet.createWallet(OLD_PIN);
 
     // Inject failure exactly when ACTIVE_SLOT_KEY is being written
-    const origSet = SecureStoreMock.setItemAsync;
-    jest.spyOn(SecureStoreMock, 'setItemAsync').mockImplementation(async (key, val) => {
-      if (key === wallet.ACTIVE_SLOT_KEY) {
+    let failActiveSlotWrite = true;
+    SecureStoreMock.setItemAsync.mockImplementation(async (key: string, val: string) => {
+      if (failActiveSlotWrite && key === wallet.ACTIVE_SLOT_KEY) {
+        failActiveSlotWrite = false;
         throw new Error('Disk full during atomic commit write');
       }
-      return origSet(key, val);
+      SecureStoreMock.__store[key] = val;
     });
 
     await expect(wallet.changeWalletPin(OLD_PIN, NEW_PIN)).rejects.toThrow();
-
-    jest.restoreAllMocks();
 
     // Startup recovery cleans up staged state
     await wallet.recoverPendingPinChange();
