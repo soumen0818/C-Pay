@@ -45,7 +45,13 @@ function extractClientRelayerPaths(appSrcDir) {
  * Extracts registered route paths from server.js
  */
 function extractServerRoutes(serverJsPath) {
-  const source = fs.readFileSync(serverJsPath, 'utf8');
+  let targetPath = serverJsPath;
+  const dir = path.dirname(serverJsPath);
+  const appPath = path.join(dir, 'app.js');
+  if (fs.existsSync(appPath)) {
+    targetPath = appPath;
+  }
+  const source = fs.readFileSync(targetPath, 'utf8');
   const routes = [];
   // Match app.get(..., app.post(..., etc.
   const regex = /app\.(get|post|put|delete|patch)\(\s*(\[[^\]]+\]|['"][^'"]+['"])/g;
