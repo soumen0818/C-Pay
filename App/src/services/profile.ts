@@ -13,7 +13,7 @@ import { supabase } from './supabase';
 
 export interface OwnProfile {
   wallet_address: string;
-  cpay_id: string | null;
+  cpayId: string | null;
   display_name: string | null;
   profile_photo_url: string | null;
 }

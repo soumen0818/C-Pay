@@ -64,37 +64,6 @@ export const InfoScreen: React.FC<InfoScreenProps> = ({ navigation, route }) => 
   );
 };
 
-  return (
-    <Screen header={<Header title={title} onBack={() => navigation.goBack()} />}>
-      {blocks.map((block, index) =>
-        block.type === 'heading' ? (
-          <Text key={index} style={styles.heading}>
-            {block.text}
-          </Text>
-        ) : (
-          <Text key={index} style={styles.paragraph}>
-            {block.text}
-          </Text>
-        )
-      )}
-
-      {doc === 'support' && (
-        <View style={styles.supportActions}>
-          <Button title={`Email ${SUPPORT_EMAIL}`} onPress={handleEmailSupport} variant="primary" size="lg" fullWidth />
-        </View>
-      )}
-
-      {(doc === 'privacy' || doc === 'terms') && (
-        <InfoBanner
-          variant="info"
-          message="This summary is provided for the closed pilot and is not a substitute for legal advice."
-          style={styles.note}
-        />
-      )}
-    </Screen>
-  );
-};
-
 const styles = createThemedStyles((COLORS) => ({
   heading: {
     fontSize: FONT_SIZES.lg,

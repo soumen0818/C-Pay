@@ -504,6 +504,11 @@ export async function relayerRequest<T = any>(
     } catch (error: any) {
       clearTimeout(timeout);
 
+      // If it was already thrown by us, rethrow immediately (do not retry client/server errors)
+      if (error instanceof RelayerRequestError) {
+        throw error;
+      }
+
       // If it's a timeout or network error, maybe retry if we haven't exhausted attempts
       const isAbort = error?.name === 'AbortError';
       if (attempt < maxAttempts) {
@@ -515,11 +520,6 @@ export async function relayerRequest<T = any>(
         throw new RelayerRequestError('Payment service is taking too long to respond. Please try again.', {
           code: 'RELAYER_TIMEOUT',
         });
-      }
-
-      // If it was already thrown by us, rethrow
-      if (error instanceof RelayerRequestError) {
-        throw error;
       }
 
       throw new RelayerRequestError(
