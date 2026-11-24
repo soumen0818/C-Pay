@@ -1,4 +1,4 @@
-import React from 'react';
+import { findPressHandlerWithText, getScreenText } from '../utils/screenTestHelpers';
 import { ProfileSetupScreen } from '../../screens/ProfileSetupScreen';
 
 describe('C-045: ProfileSetupScreen', () => {
@@ -8,9 +8,10 @@ describe('C-045: ProfileSetupScreen', () => {
     goBack: jest.fn(),
   };
 
-  test('renders ProfileSetupScreen without crashing', () => {
-    const element = React.createElement(ProfileSetupScreen, { navigation });
-    expect(element).toBeDefined();
-    expect(typeof ProfileSetupScreen).toBe('function');
+  test('shows the profile details and setup action', () => {
+    const route = { params: { walletAddress: 'GABC123' } };
+    const screen = ProfileSetupScreen({ navigation, route });
+    expect(getScreenText(screen)).toContain('Complete Your Profile');
+    expect(findPressHandlerWithText(screen, 'Complete Setup')).not.toBeNull();
   });
 });

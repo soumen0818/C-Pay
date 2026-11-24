@@ -1,4 +1,4 @@
-import React from 'react';
+import { findPressHandlerWithText, getScreenText } from '../utils/screenTestHelpers';
 import { OnboardingScreen } from '../../screens/OnboardingScreen';
 
 describe('C-045: OnboardingScreen', () => {
@@ -8,9 +8,13 @@ describe('C-045: OnboardingScreen', () => {
     goBack: jest.fn(),
   };
 
-  test('renders OnboardingScreen without crashing', () => {
-    const element = React.createElement(OnboardingScreen, { navigation });
-    expect(element).toBeDefined();
-    expect(typeof OnboardingScreen).toBe('function');
+  test('shows the welcome screen and opens email verification', () => {
+    const screen = OnboardingScreen({ navigation });
+    expect(getScreenText(screen)).toContain('C-Pay');
+
+    const getStarted = findPressHandlerWithText(screen, 'Get Started');
+    expect(getStarted).not.toBeNull();
+    getStarted?.();
+    expect(navigation.navigate).toHaveBeenCalledWith('EmailVerification');
   });
 });

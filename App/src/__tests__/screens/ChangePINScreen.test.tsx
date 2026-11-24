@@ -1,4 +1,4 @@
-import React from 'react';
+import { findPressHandlerWithText, getScreenText } from '../utils/screenTestHelpers';
 import { ChangePINScreen } from '../../screens/ChangePINScreen';
 
 describe('C-045: ChangePINScreen', () => {
@@ -8,9 +8,13 @@ describe('C-045: ChangePINScreen', () => {
     goBack: jest.fn(),
   };
 
-  test('renders ChangePINScreen without crashing', () => {
-    const element = React.createElement(ChangePINScreen, { navigation });
-    expect(element).toBeDefined();
-    expect(typeof ChangePINScreen).toBe('function');
+  test('starts by verifying the current PIN and supports cancellation', () => {
+    const screen = ChangePINScreen({ navigation });
+    expect(getScreenText(screen)).toContain('Enter Current PIN');
+
+    const cancel = findPressHandlerWithText(screen, 'Cancel');
+    expect(cancel).not.toBeNull();
+    cancel?.();
+    expect(navigation.goBack).toHaveBeenCalledTimes(1);
   });
 });
