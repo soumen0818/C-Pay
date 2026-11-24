@@ -386,7 +386,7 @@ const styles = createThemedStyles((COLORS) => ({
     marginBottom: SPACING.md,
   },
   receiptAmountLabel: {
-    fontSize: 10,
+    fontSize: 11,
     color: COLORS.textMuted,
     fontWeight: '700',
     marginBottom: 4,

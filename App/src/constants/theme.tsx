@@ -153,7 +153,7 @@ export const DARK_COLORS: ThemeColors = {
 export const SPACING = { xs: 4, sm: 8, md: 16, lg: 24, xl: 32, xxl: 48, xxxl: 64 };
 
 export const TYPOGRAPHY = {
-  sizes: { xs: 10, sm: 12, md: 14, base: 16, lg: 18, xl: 20, xxl: 24, xxxl: 32, display: 40 },
+  sizes: { xs: 11, sm: 12, md: 14, base: 16, lg: 18, xl: 20, xxl: 24, xxxl: 32, display: 40 },
   weights: {
     light: '300' as const,
     regular: '400' as const,
@@ -239,6 +239,12 @@ export const ThemeProvider: React.FC<React.PropsWithChildren> = ({ children }) =
 };
 
 export const useTheme = () => useContext(ThemeContext);
+export const useThemedStyles = <T extends NamedStyles<T> | NamedStyles<any>>(
+  factory: (colors: ThemeColors) => T & NamedStyles<any>,
+): T => {
+  const { colors } = useTheme();
+  return useMemo(() => StyleSheet.create(factory(colors)) as T, [colors, factory]);
+};
 export const getGradient = (colors: readonly string[]) => ({ colors, start: { x: 0, y: 0 }, end: { x: 1, y: 1 } });
 
 export const theme = {

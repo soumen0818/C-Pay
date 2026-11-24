@@ -4,7 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { COLORS, SPACING, FONT_SIZES, BORDER_RADIUS, SHADOWS, createThemedStyles } from '../../constants/theme';
+import { COLORS, SPACING, FONT_SIZES, BORDER_RADIUS, SHADOWS, useThemedStyles, type ThemeColors } from '../../constants/theme';
 import { formatWalletFingerprint } from '../../utils/cpayId';
 import { AlertManager } from '../../utils/alert';
 import { InitialAvatar } from '../InitialAvatar';
@@ -27,7 +27,7 @@ export const ProfileHeader: React.FC<ProfileHeaderProps> = ({
   setProfilePhoto,
   uploadProfilePhoto,
 }) => {
-  const styles = getStyles();
+  const styles = useThemedStyles(getStyles);
 
   const handlePickImage = async () => {
     try {
@@ -71,7 +71,12 @@ export const ProfileHeader: React.FC<ProfileHeaderProps> = ({
 
   return (
     <View style={styles.profileHeader}>
-      <TouchableOpacity style={styles.profilePhotoContainer} onPress={handlePickImage}>
+      <TouchableOpacity
+        style={styles.profilePhotoContainer}
+        onPress={handlePickImage}
+        accessibilityRole="button"
+        accessibilityLabel={profilePhoto ? 'Change profile photo' : 'Add profile photo'}
+      >
         {profilePhoto ? (
           <Image source={{ uri: profilePhoto }} style={styles.profilePhoto} />
         ) : (
@@ -83,7 +88,13 @@ export const ProfileHeader: React.FC<ProfileHeaderProps> = ({
       </TouchableOpacity>
 
       {!!displayName && <Text style={styles.profileName}>{displayName}</Text>}
-      <TouchableOpacity style={styles.addressContainer} onPress={handleCopyAddress} activeOpacity={0.7}>
+      <TouchableOpacity
+        style={styles.addressContainer}
+        onPress={handleCopyAddress}
+        activeOpacity={0.7}
+        accessibilityRole="button"
+        accessibilityLabel={`Copy C-Pay ID ${cpayId || formatWalletFingerprint(walletAddress)}`}
+      >
         <Text style={styles.profileAddress}>{cpayId || formatWalletFingerprint(walletAddress)}</Text>
         <Ionicons name="copy-outline" size={20} color={COLORS.primary} />
       </TouchableOpacity>
@@ -91,7 +102,7 @@ export const ProfileHeader: React.FC<ProfileHeaderProps> = ({
   );
 };
 
-const getStyles = () => createThemedStyles((COLORS) => ({
+const getStyles = (COLORS: ThemeColors) => ({
   profileHeader: {
     alignItems: 'center',
     marginBottom: SPACING.xl,
@@ -144,4 +155,4 @@ const getStyles = () => createThemedStyles((COLORS) => ({
     flex: 1,
     marginRight: SPACING.sm,
   },
-}));
+});

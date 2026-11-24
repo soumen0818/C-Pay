@@ -4,6 +4,9 @@ C-Pay follows the operating-system light or dark appearance setting. `ThemeProvi
 uses React Native's `useColorScheme` and supplies the active semantic palette to
 navigation and every screen. Component styles are created through
 `createThemedStyles`, so an appearance change is applied without restarting the app.
+For reusable components that may render outside a theme-aware screen, use the
+`useThemedStyles(factory)` hook so the component subscribes directly to the active
+palette and recreates its styles when the appearance changes.
 
 All app colors must be defined in `App/src/constants/theme.ts`. UI code should use
 semantic tokens such as `background`, `surface`, `surfaceElevated`, `textPrimary`,
@@ -26,5 +29,24 @@ Ratios are rounded down to two decimals.
 | Dark | `textInverse` (`#FFFFFF`) | `primaryDark` (`#2563EB`) | 5.17:1 | Pass |
 
 Borders and disabled controls are not used as the sole carrier of readable text.
-Camera and QR overlays deliberately use fixed white content on dark translucent
-scrims, while QR payloads retain a fixed white `qrBackground` for scanner reliability.
+
+## Readability and accessibility constraints
+
+- Keep visible text at 11 points or larger. Hidden native input text may use a
+  different size only when fully transparent and represented by a visible,
+  accessible control.
+- Use semantic theme tokens for text and surfaces. Check each foreground and
+  background pair in both palettes; do not assume a light-mode color has enough
+  contrast in dark mode.
+- Give every icon-only or otherwise ambiguous touch target an accessibility label
+  and role. Keep touch targets large enough to activate comfortably.
+- Keep QR modules black on a fixed white background whenever QR sharing is added.
+
+## Light/dark review checklist
+
+- [ ] Review every changed screen in light mode.
+- [ ] Review every changed screen in dark mode.
+- [ ] Check text, icons, status colors, borders, and disabled states against their
+  actual backgrounds.
+- [ ] Confirm visible text is at least 11 points and touch targets have useful
+  accessibility labels and roles.

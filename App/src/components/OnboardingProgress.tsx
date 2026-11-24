@@ -148,7 +148,7 @@ const styles = createThemedStyles((COLORS) => ({
     color: COLORS.textInverse,
   },
   stepLabel: {
-    fontSize: 10,
+    fontSize: 11,
     color: COLORS.textMuted,
     textAlign: 'center',
     fontWeight: '500',
