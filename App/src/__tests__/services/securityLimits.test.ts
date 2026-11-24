@@ -125,7 +125,8 @@ describe('securityLimits.ts server-authoritative limits and fail-closed behavior
     expect(allowed.allowed).toBe(true);
 
     // Rate limit fails closed if storage throws
-    const AsyncStorage = require('@react-native-async-storage/async-storage');
+    const AsyncStorageMod = require('@react-native-async-storage/async-storage');
+    const AsyncStorage = AsyncStorageMod.default || AsyncStorageMod;
     const originalGetItem = AsyncStorage.getItem;
     AsyncStorage.getItem = jest.fn().mockRejectedValueOnce(new Error('Storage failure'));
 
