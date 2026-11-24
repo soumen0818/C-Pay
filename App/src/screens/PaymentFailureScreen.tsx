@@ -13,6 +13,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, SPACING, FONT_SIZES, BORDER_RADIUS, SHADOWS, createThemedStyles, useTheme } from '../constants/theme';
 import { formatMoneyAmount } from '../utils/currency';
+import { PAYMENT_FAILURE } from '../utils/strings';
 
 const { width } = Dimensions.get('window');
 
@@ -137,7 +138,7 @@ export const PaymentFailureScreen: React.FC<PaymentFailureScreenProps> = ({
     
     if (errorReason.toLowerCase().includes('insufficient')) {
       suggestions.push('Check your account balance');
-      suggestions.push('Claim pilot credits for your wallet');
+      suggestions.push(PAYMENT_FAILURE.SUGGESTION_CLAIM_USDC);
     } else if (errorReason.toLowerCase().includes('network')) {
       suggestions.push('Check your internet connection');
       suggestions.push('Try again in a few moments');

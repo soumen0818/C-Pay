@@ -136,6 +136,13 @@ export function getNetworkConfig() {
   };
 }
 
+export function getNetworkDisplayName(network?: string): string {
+  const target = (network || STELLAR_NETWORK || '').toLowerCase();
+  if (target === 'testnet') return 'Stellar Testnet';
+  if (target === 'public' || target === 'mainnet') return 'Stellar Mainnet';
+  return `Stellar ${network || STELLAR_NETWORK}`;
+}
+
 export function isValidAccountId(accountId: string): boolean {
   return StellarSdk.StrKey.isValidEd25519PublicKey(accountId || '');
 }

@@ -7,6 +7,7 @@ import { saveTransaction } from '../services/storage';
 import { AlertManager } from '../utils/alert';
 import { getPaymentFailureCopy } from '../utils/paymentFailure';
 import { Logger } from '../utils/logger';
+import { PAYMENT } from '../utils/strings';
 
 interface UsePaymentSubmissionProps {
   navigation: any;
@@ -68,8 +69,8 @@ export const usePaymentSubmission = ({
 
       const wallet = await getAuthenticatedWallet(
         'Confirm Payment',
-        'Enter your 6-digit PIN to send pilot credits',
-        'Unlock wallet to send pilot credits'
+        PAYMENT.AUTH_PIN_PROMPT,
+        PAYMENT.AUTH_BIOMETRIC_PROMPT
       );
       
       if (!wallet) {

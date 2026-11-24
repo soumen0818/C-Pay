@@ -15,6 +15,9 @@ import { ProfileHeader, ProfileQRCode } from '../components/profile';
 import { useProfileData } from '../hooks/useProfileData';
 import { AlertManager } from '../utils/alert';
 import { signOut, deleteAccount } from '../services/auth';
+import { APP_VERSION } from '../utils/version';
+import { getNetworkConfig, getNetworkDisplayName } from '../services/blockchain';
+import { PROFILE } from '../utils/strings';
 interface ProfileScreenProps {
   navigation: any;
 }
@@ -125,6 +128,16 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({ navigation }) => {
             subtitle="PIN, biometrics, backup, wallet keys"
             onPress={() => navigation.navigate('SecurityCenter')}
           />
+          <View style={styles.divider} />
+          <ActionRow
+            style={styles.rowFlat}
+            icon="trash-outline"
+            iconColor={COLORS.error}
+            iconBackground={COLORS.error + '15'}
+            title="Delete my account"
+            subtitle="Permanently erase profile, backups, and local data"
+            onPress={handleDeleteAccount}
+          />
         </View>
       </Section>
 
@@ -214,9 +227,9 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({ navigation }) => {
       </View>
 
       <View style={styles.footer}>
-        <Text style={styles.footerText}>C-Pay v1.0.3</Text>
-        <Text style={styles.footerSubtext}>Built for closed-pilot test payments</Text>
-        <Text style={styles.footerSubtext}>Stellar Testnet</Text>
+        <Text style={styles.footerText}>C-Pay v{APP_VERSION}</Text>
+        <Text style={styles.footerSubtext}>{PROFILE.FOOTER_PILOT}</Text>
+        <Text style={styles.footerSubtext}>{getNetworkDisplayName(getNetworkConfig().network)}</Text>
       </View>
     </Screen>
   );

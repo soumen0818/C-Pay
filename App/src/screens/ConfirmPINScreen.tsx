@@ -19,6 +19,7 @@ import { registerWalletAndSaveProfile } from '../services/profile';
 import { COLORS, SPACING, TYPOGRAPHY, createThemedStyles, useTheme } from '../constants/theme';
 import { AlertManager } from '../utils/alert';
 import { WALLET_AUTH_USER_ID_KEY } from '../services/auth';
+import { isWeakPin } from '../utils/pin';
 
 const FONT_SIZES = TYPOGRAPHY.sizes;
 
@@ -65,6 +66,11 @@ export const ConfirmPINScreen: React.FC<ConfirmPINScreenProps> = ({
 
     if (pinToConfirm.length !== 6) {
       setError('Please enter a 6-digit PIN');
+      return;
+    }
+
+    if (isWeakPin(pinToConfirm)) {
+      setError('Please choose a stronger PIN');
       return;
     }
 

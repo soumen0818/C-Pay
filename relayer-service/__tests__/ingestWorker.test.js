@@ -144,10 +144,13 @@ describe('IngestWorker', () => {
 
     await worker.refreshWalletCache();
 
+    // TOID layout: 32 bits ledger | 20 bits tx order | 12 bits op index
+    // ledger 100, tx 0, op 101 => (100n << 32n) | 101n = 429496729701
+    const unknownOpToken = ((100n << 32n) | 101n).toString();
     const paymentOp = {
       id: 'op-102',
       type: 'payment',
-      paging_token: '1677725701',
+      paging_token: unknownOpToken,
       transaction_hash: 'cpay-test-tx-hash-unknown',
       from: 'GASTRANGER_1',
       to: 'GASTRANGER_2',
@@ -163,7 +166,7 @@ describe('IngestWorker', () => {
     const txUpsertReq = requests.find(r => r.url.includes('/rest/v1/transactions') && r.body?.tx_hash === 'cpay-test-tx-hash-unknown');
     expect(txUpsertReq).toBeUndefined();
     // But cursor and ledger sequence still advance
-    expect(worker.lastCursor).toBe('1677725701');
+    expect(worker.lastCursor).toBe(unknownOpToken);
     expect(worker.lastIngestedLedger).toBe(100);
   });
 
@@ -176,10 +179,11 @@ describe('IngestWorker', () => {
 
     await worker.refreshWalletCache();
 
-    // ledger 500, tx 1, op 1 => (500 * 4096 + 1) * 4096 + 1 = 8388612101
-    // ledger 500, tx 1, op 2 => (500 * 4096 + 1) * 4096 + 2 = 8388612102
-    const tokenOp1 = ((500n * 4096n + 1n) * 4096n + 1n).toString();
-    const tokenOp2 = ((500n * 4096n + 1n) * 4096n + 2n).toString();
+    // TOID layout: 32 bits ledger | 20 bits tx order | 12 bits op index
+    // ledger 500, tx 1, op 1 => (500n << 32n) | (1n << 12n) | 1n = 2147483652097
+    // ledger 500, tx 1, op 2 => (500n << 32n) | (1n << 12n) | 2n = 2147483652098
+    const tokenOp1 = ((500n << 32n) | (1n << 12n) | 1n).toString();
+    const tokenOp2 = ((500n << 32n) | (1n << 12n) | 2n).toString();
 
     const op1 = {
       id: tokenOp1,
@@ -219,7 +223,7 @@ describe('IngestWorker', () => {
     expect(txUpserts[0].body.op_index).not.toBe(txUpserts[1].body.op_index);
   });
 
-  test('reported ingest lag matches actual ledger lag, verified against a known token', async () => {
+  test('reported ingest lag matches actual ledger lag, verified against a real Horizon testnet paging token', async () => {
     const worker = new IngestWorker({
       supabaseUrl: MOCK_SUPABASE_URL,
       supabaseServiceRoleKey: MOCK_SERVICE_ROLE_KEY,
@@ -228,19 +232,20 @@ describe('IngestWorker', () => {
 
     await worker.refreshWalletCache();
 
-    // Known token: ledger 123456, tx 0, op 1
-    // (123456 * 4096 + 0) * 4096 + 1 = 2071247974401
-    const knownLedger = 123456;
-    const token = ((BigInt(knownLedger) * 4096n) * 4096n + 1n).toString();
+    // Real Horizon testnet paging token:
+    // Ledger 5884712, tx order 19, op index 1
+    // TOID: (5884712n << 32n) | (19n << 12n) | 1n = 25274645586456577
+    const realHorizonToken = '25274645586456577';
+    const expectedLedger = 5884712;
 
-    expect(worker.extractLedgerSequence({ paging_token: token })).toBe(knownLedger);
-    expect(worker.extractOpIndex({ paging_token: token })).toBe(1);
+    expect(worker.extractLedgerSequence({ paging_token: realHorizonToken })).toBe(expectedLedger);
+    expect(worker.extractOpIndex({ paging_token: realHorizonToken })).toBe(1);
 
     const paymentOp = {
-      id: token,
+      id: realHorizonToken,
       type: 'payment',
-      paging_token: token,
-      transaction_hash: 'tx-known-lag',
+      paging_token: realHorizonToken,
+      transaction_hash: 'c71055f109cd74ce054e9b793d0d97c601ddcb38ff9d30904edbe0a7a08f40c8',
       from: 'GAKNOWN_WALLET_1',
       to: 'GAUNKNOWN_WALLET',
       amount: '10.0000000',
@@ -251,19 +256,55 @@ describe('IngestWorker', () => {
 
     await worker.processOperation(paymentOp);
 
-    expect(worker.lastIngestedLedger).toBe(knownLedger);
+    expect(worker.lastIngestedLedger).toBe(expectedLedger);
 
-    worker.latestNetworkLedger = 123476;
+    worker.latestNetworkLedger = expectedLedger + 20;
     worker.status = 'running';
 
     const lag = worker.getLag();
-    expect(lag.lastIngestedLedger).toBe(knownLedger);
-    expect(lag.latestNetworkLedger).toBe(123476);
+    expect(lag.lastIngestedLedger).toBe(expectedLedger);
+    expect(lag.latestNetworkLedger).toBe(expectedLedger + 20);
     expect(lag.ledgerLag).toBe(20);
 
     const health = worker.getHealth();
     expect(health.lag).toBe(20);
     expect(health.healthy).toBe(true);
+  });
+
+  test('extractLedgerSequence correctly handles real Horizon tokens and field preferences', () => {
+    const worker = new IngestWorker();
+
+    // Real Horizon testnet paging tokens
+    // Operation 25274645586456577: ledger 5884712, tx order 19, op index 1
+    expect(worker.extractLedgerSequence({ paging_token: '25274645586456577' })).toBe(5884712);
+    // Operation 25274684241104901: ledger 5884721, tx order 5, op index 5
+    expect(worker.extractLedgerSequence({ paging_token: '25274684241104901' })).toBe(5884721);
+    // Operation id used as fallback if paging_token absent
+    expect(worker.extractLedgerSequence({ id: '25274645586456577' })).toBe(5884712);
+    // Paging token with hyphen suffix
+    expect(worker.extractLedgerSequence({ paging_token: '25274645586456577-1' })).toBe(5884712);
+
+    // Field preference: transaction_attr.ledger takes highest precedence
+    expect(
+      worker.extractLedgerSequence({
+        transaction_attr: { ledger: 9000001 },
+        ledger: 8000001,
+        paging_token: '25274645586456577',
+      })
+    ).toBe(9000001);
+
+    // Field preference: ledger field preferred over paging_token when transaction_attr is absent
+    expect(
+      worker.extractLedgerSequence({
+        ledger: 8000001,
+        paging_token: '25274645586456577',
+      })
+    ).toBe(8000001);
+
+    // Null/empty/invalid handling
+    expect(worker.extractLedgerSequence(null)).toBeNull();
+    expect(worker.extractLedgerSequence({})).toBeNull();
+    expect(worker.extractLedgerSequence({ paging_token: 'invalid_token' })).toBeNull();
   });
 
   test('replaying a ledger range produces no duplicate records via on_conflict idempotency', async () => {
@@ -275,7 +316,8 @@ describe('IngestWorker', () => {
 
     await worker.refreshWalletCache();
 
-    const token = ((100n * 4096n + 1n) * 4096n + 1n).toString();
+    // TOID layout: (100n << 32n) | (1n << 12n) | 1n = 429496733697
+    const token = ((100n << 32n) | (1n << 12n) | 1n).toString();
     const paymentOp = {
       id: token,
       type: 'payment',
