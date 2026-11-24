@@ -13,6 +13,8 @@
 
 'use strict';
 
+const initialEnv = { ...process.env };
+
 // ─── helpers ────────────────────────────────────────────────────────────────
 
 /**
@@ -120,6 +122,9 @@ function buildFetchMock({
     if (urlStr.includes('/rest/v1/wallet_bindings')) {
       const parsed = new URL(urlStr);
       const method = (options && options.method) || 'GET';
+      if (walletBindingsUnavailable) {
+        return makeResponse(false, 503, { code: 'PGRST000', message: 'database unavailable' });
+      }
       if (method === 'POST') {
         if (failBindingWrite) {
           return makeResponse(false, 503, { code: 'PGRST000', message: 'database unavailable' });
@@ -128,6 +133,9 @@ function buildFetchMock({
         const wallets = userWallets[binding.auth_user_id] || (userWallets[binding.auth_user_id] = []);
         if (!wallets.includes(binding.wallet_address)) wallets.push(binding.wallet_address);
         return makeResponse(true, 201, null);
+      }
+      if (failOwnershipLookup && (parsed.searchParams.has('auth_user_id') || parsed.searchParams.has('wallet_address'))) {
+        return makeResponse(false, 503, { code: 'PGRST000', message: 'database unavailable' });
       }
       const authUserIdFilter = parsed.searchParams.get('auth_user_id') || '';
       if (authUserIdFilter) {
@@ -301,6 +309,9 @@ async function closeActiveModuleServers() {
  */
 async function loadServer(env = {}) {
   const mod = await loadServerModule(env);
+  if (mod.config.authRequired && mod.assertWalletBindingsReachable && !env.skipProbe) {
+    await mod.assertWalletBindingsReachable();
+  }
   app = mod.app;
   return app;
 }
@@ -319,9 +330,6 @@ async function loadServerModule(env = {}, { closeExisting = true } = {}) {
     ALLOW_HTTP_HORIZON: 'true',
     ALLOW_CUSTOM_HORIZON: 'true',
     STELLAR_HORIZON_URL: 'http://localhost:9999/horizon',
-    ALLOW_HTTP_SOROBAN_RPC: 'true',
-    ALLOW_CUSTOM_SOROBAN_RPC: 'true',
-    SOROBAN_RPC_URL: 'http://localhost:9999/soroban',
     STELLAR_NETWORK_PASSPHRASE: 'Test SDF Network ; September 2015',
     SPONSOR_SECRET: 'SCTIPFZ5KVBOENXTZK3FQPIGR5H73R5HE2MNZ4AXA7CA7JEEXUG5AF5G',
     DISTRIBUTION_SECRET: 'SBMJSD66AECV4CKZWTHXCH4EDZ5CRAZNNZL4OQP6IQAR4YLQ6HE5QJDM',
@@ -332,21 +340,29 @@ async function loadServerModule(env = {}, { closeExisting = true } = {}) {
     RELAYER_AUTH_REQUIRED: 'true',
     RELAYER_ADMIN_TOKEN: 'test-admin-token',
     ENABLE_TESTNET_FAUCET: 'true',
-    LEDGER_INGEST_ENABLED: 'false',
     PORT: '0',
     SUPABASE_AUTH_FALLBACK_TO_API: 'true',
   };
 
   const { __fetchMock, ...envOverrides } = env;
+  if (envOverrides.RELAYER_AUTH_REQUIRED === 'false' && !envOverrides.NODE_ENV) {
+    envOverrides.NODE_ENV = 'development';
+  }
   Object.assign(process.env, defaultEnv, envOverrides);
 
   // Mount our fetch mock onto the global so the module picks it up.
   const fetchImpl = __fetchMock || buildFetchMock();
   global.fetch = fetchImpl;
 
-  const mod = require('./server.js');
-  app = mod.app;
-  activeModuleServer = mod.server;
+  const { createApp } = require('../app.js');
+  const mod = createApp({
+    supabase: { fetch: fetchImpl },
+  });
+  app = mod;
+  mod.app = mod;
+  mod.server = null;
+  mod.SupabaseRequestError = createApp.SupabaseRequestError;
+  activeModuleServer = null;
   activeIngestWorker = mod.ingestWorker;
 
   return mod;
@@ -448,15 +464,13 @@ afterEach(async () => {
   }
 
   // Clean up env additions to avoid bleed between suites.
-  const ADDED_KEYS = [
-    'STELLAR_NETWORK', 'ALLOW_HTTP_HORIZON', 'ALLOW_CUSTOM_HORIZON',
-    'STELLAR_HORIZON_URL', 'ALLOW_HTTP_SOROBAN_RPC', 'ALLOW_CUSTOM_SOROBAN_RPC',
-    'SOROBAN_RPC_URL', 'STELLAR_NETWORK_PASSPHRASE', 'SPONSOR_SECRET',
-    'DISTRIBUTION_SECRET', 'CPINR_ASSET_ISSUER', 'SUPABASE_URL',
-    'SUPABASE_SERVICE_ROLE_KEY', 'RELAYER_AUTH_REQUIRED', 'RELAYER_ADMIN_TOKEN', 'ENABLE_ADD_MONEY',
-    'PORT', 'LEDGER_INGEST_ENABLED', 'ALERT_WEBHOOK_URL', 'LOW_BALANCE_CHECK_INTERVAL_MS',
-  ];
-  ADDED_KEYS.forEach(k => delete process.env[k]);
+  for (const k of Object.keys(process.env)) {
+    if (!(k in initialEnv)) {
+      delete process.env[k];
+    } else {
+      process.env[k] = initialEnv[k];
+    }
+  }
   jest.resetModules();
 });
 
@@ -781,7 +795,9 @@ describe('/add-money persistence safety', () => {
   it('reserves the persisted cooldown before submitting a payment', () => {
     const fs = require('fs');
     const path = require('path');
-    const source = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
+    const source = fs.existsSync(path.join(__dirname, '../app.js'))
+      ? fs.readFileSync(path.join(__dirname, '../app.js'), 'utf8')
+      : fs.readFileSync(path.join(__dirname, '../server.js'), 'utf8');
     const routeStart = source.indexOf("app.post('/add-money'");
     const routeEnd = source.indexOf("app.get('/tx/:hash'", routeStart);
     const routeSource = source.slice(routeStart, routeEnd);

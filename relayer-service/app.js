@@ -25,6 +25,34 @@ const {
   MAX_MEMO_TEXT_BYTES,
 } = require('./paymentValidation');
 
+function normalizeOptionalString(value) {
+  return typeof value === 'string' && value.trim() ? value.trim() : '';
+}
+
+function normalizeAmount(value, maxAmount) {
+  const amount = String(value).trim();
+
+  if (!/^\d+(\.\d{1,7})?$/.test(amount)) {
+    const error = new Error('Amount must be a positive number with up to 7 decimal places');
+    error.statusCode = 400;
+    error.expose = true;
+    throw error;
+  }
+
+  const numeric = Number(amount);
+  if (!Number.isFinite(numeric) || numeric <= 0 || numeric > maxAmount) {
+    const error = new Error(`Amount must be greater than 0 and no more than ${maxAmount}`);
+    error.statusCode = 400;
+    error.expose = true;
+    if (numeric > maxAmount) {
+      error.code = 'PAYMENT_AMOUNT_EXCEEDED';
+    }
+    throw error;
+  }
+
+  return amount;
+}
+
 function createApp(options = {}) {
   const config = options.config || loadConfig();
   const PORT = options.port !== undefined ? options.port : config.port;
@@ -367,7 +395,7 @@ app.post('/accounts/submit', requireAuthenticatedUser, requireWalletOwnership(),
     throw error;
   }
 
-  preparedAccountTransactions.delete(prepared.key);
+  delete preparedAccountTransactions[prepared.key];
 
   res.json({
     hash: result.hash,
@@ -1456,34 +1484,6 @@ function assertAccountId(value, label) {
   return value;
 }
 
-function normalizeOptionalString(value) {
-  return typeof value === 'string' && value.trim() ? value.trim() : '';
-}
-
-function normalizeAmount(value, maxAmount) {
-  const amount = String(value).trim();
-
-  if (!/^\d+(\.\d{1,7})?$/.test(amount)) {
-    const error = new Error('Amount must be a positive number with up to 7 decimal places');
-    error.statusCode = 400;
-    error.expose = true;
-    throw error;
-  }
-
-  const numeric = Number(amount);
-  if (!Number.isFinite(numeric) || numeric <= 0 || numeric > maxAmount) {
-    const error = new Error(`Amount must be greater than 0 and no more than ${maxAmount}`);
-    error.statusCode = 400;
-    error.expose = true;
-    if (numeric > maxAmount) {
-      error.code = 'PAYMENT_AMOUNT_EXCEEDED';
-    }
-    throw error;
-  }
-
-  return amount;
-}
-
 async function getBalances(accountId) {
   try {
     const account = await server.loadAccount(accountId);
@@ -2074,12 +2074,19 @@ async function assertWalletBindingsReachable() {
     throw new Error('wallet_bindings requires configured Supabase persistence');
   }
 
-  const rows = await supabaseRestRequest('wallet_bindings?select=id&limit=1', {
-    method: 'GET',
-    headers: { Accept: 'application/json' },
-  });
-  if (!Array.isArray(rows)) {
-    throw new Error('wallet_bindings startup probe returned an invalid response');
+  try {
+    const rows = await supabaseRestRequest('wallet_bindings?select=id&limit=1', {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+    });
+    if (!Array.isArray(rows)) {
+      throw new Error('wallet_bindings startup probe returned an invalid response');
+    }
+  } catch (err) {
+    if (err.message && err.message.includes('wallet_bindings')) {
+      throw err;
+    }
+    throw new Error(`wallet_bindings probe failed: ${err.message}`);
   }
 }
 
@@ -2286,10 +2293,6 @@ async function shouldSendLowBalanceAlert(condition = 'low-balance') {
               }
               return true;
             } else {
-              localAlertCooldowns[condition] = exp;
-              if (condition === 'low-balance') {
-                localLowBalanceAlertUntil = exp;
-              }
               return false;
             }
           }
@@ -2383,6 +2386,8 @@ async function resetLowBalanceAlert(condition = 'low-balance') {
 }
 
 createApp.createApp = createApp;
+createApp.normalizeAmount = normalizeAmount;
+createApp.normalizeOptionalString = normalizeOptionalString;
 createApp.validatePaymentTransaction = baseValidatePaymentTransaction;
 createApp.assertTransactionEnvelopeXdr = assertTransactionEnvelopeXdr;
 createApp.validateTransactionMemo = validateTransactionMemo;

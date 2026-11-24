@@ -127,6 +127,8 @@ function loadConfig(env = process.env) {
     ingestPollIntervalMs: readNumber(env, 'INGEST_POLL_INTERVAL_MS', 5000, { integer: true, min: 0, exclusiveMin: true }),
     ingestPendingTimeoutMs: readNumber(env, 'INGEST_PENDING_TIMEOUT_MS', 300000, { integer: true, min: 0, exclusiveMin: true }),
     ingestStartCursor: optionalString(env.INGEST_START_CURSOR) || null,
+    quotesEnabled: readBoolean(env, 'ENABLE_QUOTES_API', false),
+    quoteSignatureSecret: optionalString(env.QUOTE_SIGNATURE_SECRET) || '',
     quoteFeeBps: readNumber(env, 'QUOTE_FEE_BPS', 175, { integer: true, min: 0, max: 10000 }),
     quoteSpreadBps: readNumber(env, 'QUOTE_SPREAD_BPS', 0, { integer: true, min: 0, max: 10000 }),
     quoteTtlSeconds: readNumber(env, 'QUOTE_TTL_SECONDS', 60, { integer: true, min: 0, exclusiveMin: true }),
