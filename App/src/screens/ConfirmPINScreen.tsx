@@ -66,7 +66,7 @@ export const ConfirmPINScreen: React.FC<ConfirmPINScreenProps> = ({
   route,
 }) => {
   useTheme();
-  const { pin: originalPin } = route.params;
+  const { pin: originalPin, walletReplacement = false, cpayId: existingCPayId } = route.params;
   const [confirmPin, setConfirmPin] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -101,7 +101,18 @@ export const ConfirmPINScreen: React.FC<ConfirmPINScreenProps> = ({
 
       // Save wallet address locally for profile and optional biometric setup.
       const verifiedEmail = await AsyncStorage.getItem('user_email');
-      const cpayId = generateCPayId(verifiedEmail || '', walletAddress);
+      let cpayId = walletReplacement && existingCPayId
+        ? existingCPayId
+        : generateCPayId(verifiedEmail || '', walletAddress);
+      if (walletReplacement) {
+        const { data, error } = await supabase.rpc('replace_own_wallet_binding', {
+          p_new_wallet_address: walletAddress,
+        });
+        if (error || !data?.[0]?.wallet_address) {
+          throw new Error(error?.message || 'Could not securely replace the wallet binding.');
+        }
+        cpayId = data[0].cpay_id || cpayId;
+      }
       await Promise.all([
         AsyncStorage.setItem('wallet_address', walletAddress),
         AsyncStorage.setItem('cpay_id', cpayId),
@@ -112,7 +123,7 @@ export const ConfirmPINScreen: React.FC<ConfirmPINScreenProps> = ({
       // Cloud save should not block local wallet creation or onboarding progress.
       saveInitialUserRecord(walletAddress, cpayId);
 
-      navigation.replace('ProfileSetup', { walletAddress });
+      navigation.replace('ProfileSetup', { walletAddress, walletReplacement, cpayId });
     } catch (err) {
       Logger.error('Wallet creation error:', err);
       AlertManager.alert('Error', 'Failed to create wallet. Please try again.');

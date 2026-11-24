@@ -19,7 +19,7 @@ interface CreatePINScreenProps {
   route: any;
 }
 
-export const CreatePINScreen: React.FC<CreatePINScreenProps> = ({ navigation }) => {
+export const CreatePINScreen: React.FC<CreatePINScreenProps> = ({ navigation, route }) => {
   useTheme();
   const [pin, setPin] = useState('');
   const [error, setError] = useState('');
@@ -36,7 +36,7 @@ export const CreatePINScreen: React.FC<CreatePINScreenProps> = ({ navigation }) 
     }
 
     navigatingRef.current = true;
-    navigation.navigate('ConfirmPIN', { pin: pinToConfirm });
+    navigation.navigate('ConfirmPIN', { pin: pinToConfirm, ...route.params });
   };
 
   const handlePINChange = (newPin: string) => {

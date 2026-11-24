@@ -32,9 +32,9 @@ type RootStackParamList = {
   Splash: undefined;
   Onboarding: undefined;
   EmailVerification: undefined;
-  CreatePIN: undefined;
-  ConfirmPIN: { pin: string };
-  ProfileSetup: { walletAddress: string };
+  CreatePIN: { walletReplacement?: boolean; cpayId?: string | null } | undefined;
+  ConfirmPIN: { pin: string; walletReplacement?: boolean; cpayId?: string | null };
+  ProfileSetup: { walletAddress: string; walletReplacement?: boolean; cpayId?: string | null };
   ChangePIN: undefined;
   ForgotPIN: undefined;
   CloudBackupSetup: { fromSettings?: boolean } | undefined;
