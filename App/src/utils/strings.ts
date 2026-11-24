@@ -194,7 +194,6 @@ export const PROFILE = {
 
 export const QR = {
   SCAN_TITLE: 'Scan QR Code',
-  SCAN_HINT: 'Point camera at a C-Pay QR code',
   GENERATE_TITLE: 'My QR Code',
   AMOUNT_QR_TITLE: 'Payment QR',
   DOWNLOAD_SUCCESS: 'QR code saved to your photos',

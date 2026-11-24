@@ -73,8 +73,6 @@ type MainTabsParamList = {
 const Stack = createStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator<MainTabsParamList>();
 
-const linking = { prefixes: ['cpay://', 'https://cpay.app'] };
-
 const TAB_BAR_CONTENT_HEIGHT = 56;
 const MIN_TAB_BAR_BOTTOM_PADDING = SPACING.sm;
 
@@ -146,7 +144,7 @@ export const Navigation = () => {
   };
 
   return (
-    <NavigationContainer linking={linking} theme={navigationTheme}>
+    <NavigationContainer theme={navigationTheme}>
       <Stack.Navigator
         screenOptions={{
           headerShown: false,
@@ -240,30 +238,5 @@ const styles = createThemedStyles((COLORS) => ({
     fontSize: 11,
     fontWeight: '600',
     marginTop: 0,
-  },
-  scanButton: {
-    top: -18,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  scanButtonInner: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: COLORS.primary,
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: COLORS.shadow,
-    shadowOffset: {
-      width: 0,
-      height: 4,
-    },
-    shadowOpacity: 0.3,
-    shadowRadius: 4.65,
-    elevation: 8,
-  },
-  scanButtonFocused: {
-    backgroundColor: COLORS.primaryDark,
-    transform: [{ scale: 1.1 }],
   },
 }));
