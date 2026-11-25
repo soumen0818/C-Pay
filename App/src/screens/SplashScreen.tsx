@@ -33,14 +33,14 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ navigation }) => {
     try {
       // Keep the splash visible just long enough to avoid a hard flash.
       await new Promise(resolve => setTimeout(resolve, 500));
-      
+
       // On startup, detect and recover from any half-finished PIN change
       await recoverPendingPinChange();
 
       // Check if user has already created wallet
       const walletExists = await hasWallet();
       Logger.info('Wallet exists:', walletExists);
-      
+
       if (walletExists) {
         const emailVerified = await AsyncStorage.getItem('email_verified');
 
@@ -105,7 +105,7 @@ const styles = createThemedStyles((COLORS) => ({
   },
   subtitle: {
     fontSize: FONT_SIZES.md,
-    color: COLORS.textInverse + 'CC',
+    color: COLORS.textInverse,
   },
   loadingContainer: {
     position: 'absolute',
@@ -114,7 +114,7 @@ const styles = createThemedStyles((COLORS) => ({
   },
   loadingText: {
     fontSize: FONT_SIZES.sm,
-    color: COLORS.textInverse + 'AA',
+    color: COLORS.textInverse,
     marginTop: SPACING.sm,
   },
 }));

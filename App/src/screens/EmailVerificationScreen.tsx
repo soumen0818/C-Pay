@@ -580,7 +580,7 @@ const styles = createThemedStyles((COLORS) => ({
     zIndex: 2,
     color: 'transparent',
     backgroundColor: 'transparent',
-    fontSize: 1,
+    fontSize: 11,
     lineHeight: 1,
     padding: 0,
   },

@@ -775,7 +775,7 @@ const styles = createThemedStyles((COLORS) => ({
   },
   actionSubtitle: {
     marginTop: 2,
-    fontSize: 9,
+    fontSize: 11,
     color: COLORS.textMuted,
     textAlign: 'center',
   },
