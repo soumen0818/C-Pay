@@ -1,4 +1,4 @@
-import React from 'react';
+import { getScreenText } from '../utils/screenTestHelpers';
 import { ConfirmPINScreen } from '../../screens/ConfirmPINScreen';
 
 describe('C-045: ConfirmPINScreen', () => {
@@ -8,10 +8,9 @@ describe('C-045: ConfirmPINScreen', () => {
     goBack: jest.fn(),
   };
 
-  test('renders ConfirmPINScreen without crashing', () => {
+  test('asks the user to confirm the new PIN', () => {
     const route = { params: { pin: '123456' } };
-    const element = React.createElement(ConfirmPINScreen, { navigation, route });
-    expect(element).toBeDefined();
-    expect(typeof ConfirmPINScreen).toBe('function');
+    const screen = ConfirmPINScreen({ navigation, route });
+    expect(getScreenText(screen)).toContain('Confirm Your PIN');
   });
 });

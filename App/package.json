@@ -73,6 +73,7 @@
       "node_modules/(?!(expo|expo-modules-core|@expo|@stellar|react-native|@react-native|@unimodules|unimodules)/)"
     ],
     "moduleNameMapper": {
+      "\\.(png|jpe?g|gif|webp)$": "<rootDir>/src/__mocks__/assetMock.js",
       "^@react-native-async-storage/async-storage$": "<rootDir>/src/__mocks__/asyncStorage.ts",
       "^expo-secure-store$": "<rootDir>/src/__mocks__/expoSecureStore.ts",
       "^expo-crypto$": "<rootDir>/src/__mocks__/expoCrypto.ts",

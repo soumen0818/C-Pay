@@ -1,4 +1,4 @@
-import React from 'react';
+import { findPressHandlerWithText, getScreenText } from '../utils/screenTestHelpers';
 import { BiometricSetupScreen } from '../../screens/BiometricSetupScreen';
 
 describe('C-045: BiometricSetupScreen', () => {
@@ -8,9 +8,13 @@ describe('C-045: BiometricSetupScreen', () => {
     goBack: jest.fn(),
   };
 
-  test('renders BiometricSetupScreen without crashing', () => {
-    const element = React.createElement(BiometricSetupScreen, { navigation });
-    expect(element).toBeDefined();
-    expect(typeof BiometricSetupScreen).toBe('function');
+  test('offers PIN access when biometrics are not available', () => {
+    const screen = BiometricSetupScreen({ navigation });
+    expect(getScreenText(screen)).toContain('All Set!');
+
+    const getStarted = findPressHandlerWithText(screen, 'Get Started');
+    expect(getStarted).not.toBeNull();
+    getStarted?.();
+    expect(navigation.replace).toHaveBeenCalledWith('MainTabs');
   });
 });

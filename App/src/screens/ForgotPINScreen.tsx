@@ -24,6 +24,8 @@ import { COLORS, SPACING, TYPOGRAPHY, createThemedStyles, useTheme } from '../co
 import { AlertManager } from '../utils/alert';
 import { formatWalletFingerprint, getCPayIdByWallet } from '../utils/cpayId';
 import { isWeakPin } from '../utils/pin';
+import { supabase } from '../services/supabase';
+import { FORGOT_PIN } from '../utils/strings';
 
 const FONT_SIZES = TYPOGRAPHY.sizes;
 
