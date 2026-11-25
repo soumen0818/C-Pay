@@ -1,4 +1,4 @@
-import React from 'react';
+import { findPressHandlerWithText, getScreenText } from '../utils/screenTestHelpers';
 import { LoginScreen } from '../../screens/LoginScreen';
 
 describe('C-045: LoginScreen', () => {
@@ -8,9 +8,13 @@ describe('C-045: LoginScreen', () => {
     goBack: jest.fn(),
   };
 
-  test('renders LoginScreen without crashing', () => {
-    const element = React.createElement(LoginScreen, { navigation });
-    expect(element).toBeDefined();
-    expect(typeof LoginScreen).toBe('function');
+  test('shows the login prompt and opens PIN recovery', () => {
+    const screen = LoginScreen({ navigation });
+    expect(getScreenText(screen)).toContain('Welcome Back');
+
+    const forgotPin = findPressHandlerWithText(screen, 'Forgot PIN?');
+    expect(forgotPin).not.toBeNull();
+    forgotPin?.();
+    expect(navigation.navigate).toHaveBeenCalledWith('ForgotPIN');
   });
 });

@@ -1,4 +1,4 @@
-import React from 'react';
+import { getScreenText } from '../utils/screenTestHelpers';
 import { CreatePINScreen } from '../../screens/CreatePINScreen';
 
 describe('C-045: CreatePINScreen', () => {
@@ -8,9 +8,11 @@ describe('C-045: CreatePINScreen', () => {
     goBack: jest.fn(),
   };
 
-  test('renders CreatePINScreen without crashing', () => {
-    const element = React.createElement(CreatePINScreen, { navigation });
-    expect(element).toBeDefined();
-    expect(typeof CreatePINScreen).toBe('function');
+  test('explains PIN requirements before wallet setup', () => {
+    const route = { params: {} };
+    const screen = CreatePINScreen({ navigation, route });
+    const text = getScreenText(screen);
+    expect(text).toContain('Create Your PIN');
+    expect(text).toContain('Avoid obvious patterns');
   });
 });
