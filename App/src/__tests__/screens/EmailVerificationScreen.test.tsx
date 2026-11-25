@@ -1,4 +1,4 @@
-import React from 'react';
+import { findPressHandlerWithText, getScreenText } from '../utils/screenTestHelpers';
 import { EmailVerificationScreen } from '../../screens/EmailVerificationScreen';
 
 describe('C-045: EmailVerificationScreen', () => {
@@ -8,9 +8,9 @@ describe('C-045: EmailVerificationScreen', () => {
     goBack: jest.fn(),
   };
 
-  test('renders EmailVerificationScreen without crashing', () => {
-    const element = React.createElement(EmailVerificationScreen, { navigation });
-    expect(element).toBeDefined();
-    expect(typeof EmailVerificationScreen).toBe('function');
+  test('starts with the email verification step', () => {
+    const screen = EmailVerificationScreen({ navigation });
+    expect(getScreenText(screen)).toContain('Verify with Email');
+    expect(findPressHandlerWithText(screen, 'Send Email Code')).not.toBeNull();
   });
 });

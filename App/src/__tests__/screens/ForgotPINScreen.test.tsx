@@ -1,4 +1,4 @@
-import React from 'react';
+import { findPressHandlerWithText, getScreenText } from '../utils/screenTestHelpers';
 import { ForgotPINScreen } from '../../screens/ForgotPINScreen';
 
 describe('C-045: ForgotPINScreen', () => {
@@ -8,9 +8,13 @@ describe('C-045: ForgotPINScreen', () => {
     goBack: jest.fn(),
   };
 
-  test('renders ForgotPINScreen without crashing', () => {
-    const element = React.createElement(ForgotPINScreen, { navigation });
-    expect(element).toBeDefined();
-    expect(typeof ForgotPINScreen).toBe('function');
+  test('shows PIN recovery and returns when cancelled', () => {
+    const screen = ForgotPINScreen({ navigation });
+    expect(getScreenText(screen)).toContain('Reset PIN');
+
+    const cancel = findPressHandlerWithText(screen, 'Cancel');
+    expect(cancel).not.toBeNull();
+    cancel?.();
+    expect(navigation.goBack).toHaveBeenCalledTimes(1);
   });
 });

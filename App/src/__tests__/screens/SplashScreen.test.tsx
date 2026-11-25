@@ -1,4 +1,4 @@
-import React from 'react';
+import { getScreenText } from '../utils/screenTestHelpers';
 import { SplashScreen } from '../../screens/SplashScreen';
 
 describe('C-045: SplashScreen', () => {
@@ -8,9 +8,10 @@ describe('C-045: SplashScreen', () => {
     goBack: jest.fn(),
   };
 
-  test('renders SplashScreen without crashing', () => {
-    const element = React.createElement(SplashScreen, { navigation });
-    expect(element).toBeDefined();
-    expect(typeof SplashScreen).toBe('function');
+  test('shows the startup state while the wallet is checked', () => {
+    const screen = SplashScreen({ navigation });
+    const text = getScreenText(screen);
+    expect(text).toContain('C-Pay');
+    expect(text).toContain('Loading...');
   });
 });
