@@ -10,7 +10,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, SPACING, FONT_SIZES, BORDER_RADIUS, SHADOWS, createThemedStyles, useTheme } from '../constants/theme';
 import { Screen, Section, ActionRow } from '../components';
-import { ProfileHeader, ProfileQRCode } from '../components/profile';
+import { ProfileHeader } from '../components/profile';
 import { useProfileData } from '../hooks/useProfileData';
 import { AlertManager } from '../utils/alert';
 import { signOut, deleteAccount } from '../services/auth';
@@ -108,13 +108,6 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({ navigation }) => {
         setProfilePhoto={setProfilePhoto}
         uploadProfilePhoto={uploadProfilePhoto}
       />
-      <ProfileQRCode
-        profilePhoto={profilePhoto}
-        displayName={displayName}
-        cpayId={cpayId}
-        walletAddress={walletAddress}
-      />
-
       {/* Security — kept near the top so security actions aren't buried */}
       <Section title="Security">
         <View style={styles.card}>

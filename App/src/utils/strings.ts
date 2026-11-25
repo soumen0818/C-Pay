@@ -212,9 +212,6 @@ export const PROFILE = {
   CHANGE_PIN: 'Change PIN',
   BIOMETRIC_LABEL: 'Biometric unlock',
   NOTIFICATIONS_LABEL: 'Notifications',
-  QR_DIALOG_TITLE: 'Scan this QR code to send me testnet USDC on C-Pay.',
-  QR_SHARE_CARD_FOOTER: 'Scan to send testnet USDC',
-  QR_SHARE_INSTRUCTION: 'Let others scan this QR code to send you testnet USDC',
   FOOTER_PILOT: 'Built for closed-pilot test payments',
 };
 
@@ -250,7 +247,6 @@ export const PAYMENT_FAILURE = {
 
 export const QR = {
   SCAN_TITLE: 'Scan QR Code',
-  SCAN_HINT: 'Point camera at a C-Pay QR code',
   GENERATE_TITLE: 'My QR Code',
   AMOUNT_QR_TITLE: 'Payment QR',
   DOWNLOAD_SUCCESS: 'QR code saved to your photos',

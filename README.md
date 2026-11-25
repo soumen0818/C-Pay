@@ -43,7 +43,8 @@ The repository currently contains a testnet wallet prototype, not a production r
 
 - Expo/React Native app with Supabase email OTP, PIN and optional biometric unlock.
 - Locally created Stellar keypair with an encrypted cloud recovery backup.
-- Human-readable C-Pay IDs, QR send/receive flows, and transaction history.
+- Human-readable C-Pay IDs and transaction history.
+- The app currently has no in-app QR scanning or QR-based payment flow.
 - Sponsored Stellar account creation, trustline setup, and relayed fee-bump payments.
 - Express relayer with authentication hooks, rate limits, idempotency controls, health reporting, and Horizon ingestion.
 - Supabase schemas and migrations for users, wallet backups, and transaction records.
