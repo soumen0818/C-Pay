@@ -6,7 +6,6 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  Switch,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, SPACING, FONT_SIZES, BORDER_RADIUS, SHADOWS, createThemedStyles, useTheme } from '../constants/theme';
@@ -28,10 +27,8 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({ navigation }) => {
     walletAddress,
     cpayId,
     displayName,
-    notificationsEnabled,
     profilePhoto,
     setProfilePhoto,
-    handleToggleNotifications,
     uploadProfilePhoto,
   } = useProfileData();
 
@@ -150,26 +147,6 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({ navigation }) => {
             title="Transaction history"
             subtitle="View all your payments"
             onPress={() => navigation.navigate('TransactionHistory')}
-          />
-        </View>
-      </Section>
-
-      {/* Preferences */}
-      <Section title="Preferences">
-        <View style={styles.card}>
-          <ActionRow
-            style={styles.rowFlat}
-            icon="notifications-outline"
-            title="Notifications"
-            subtitle="Transaction alerts"
-            right={
-              <Switch
-                value={notificationsEnabled}
-                onValueChange={handleToggleNotifications}
-                trackColor={{ false: COLORS.border, true: COLORS.primary + '50' }}
-                thumbColor={notificationsEnabled ? COLORS.primary : COLORS.textMuted}
-              />
-            }
           />
         </View>
       </Section>

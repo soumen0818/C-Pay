@@ -10,7 +10,6 @@ export const useProfileData = () => {
   const [walletAddress, setWalletAddress] = useState<string>('');
   const [cpayId, setCpayId] = useState<string>('');
   const [displayName, setDisplayName] = useState<string>('');
-  const [notificationsEnabled, setNotificationsEnabled] = useState<boolean>(true);
   const [profilePhoto, setProfilePhoto] = useState<string | null>(null);
 
   const loadWalletAddress = async () => {
@@ -53,11 +52,6 @@ export const useProfileData = () => {
     }
   };
 
-  const loadSettings = async () => {
-    const notifSetting = await AsyncStorage.getItem('notifications_enabled');
-    setNotificationsEnabled(notifSetting !== 'false');
-  };
-
   const loadProfilePhoto = async () => {
     try {
       const address = await AsyncStorage.getItem('wallet_address');
@@ -84,7 +78,6 @@ export const useProfileData = () => {
     loadWalletAddress();
     loadCPayId();
     loadDisplayName();
-    loadSettings();
     loadProfilePhoto();
   }, []);
 
@@ -93,14 +86,8 @@ export const useProfileData = () => {
       loadCPayId();
       loadDisplayName();
       loadProfilePhoto();
-      loadSettings();
     }, [])
   );
-
-  const handleToggleNotifications = async (value: boolean) => {
-    setNotificationsEnabled(value);
-    await AsyncStorage.setItem('notifications_enabled', value.toString());
-  };
 
   const uploadProfilePhoto = async (photoUri: string): Promise<string | null> => {
     try {
@@ -191,10 +178,8 @@ export const useProfileData = () => {
     walletAddress,
     cpayId,
     displayName,
-    notificationsEnabled,
     profilePhoto,
     setProfilePhoto,
-    handleToggleNotifications,
     uploadProfilePhoto,
   };
 };
