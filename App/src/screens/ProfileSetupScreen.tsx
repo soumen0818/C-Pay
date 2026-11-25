@@ -29,7 +29,7 @@ interface ProfileSetupScreenProps {
 
 export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({ navigation, route }) => {
   useTheme();
-  const { walletAddress } = route.params;
+  const { walletAddress, walletReplacement = false, cpayId: existingCPayId } = route.params;
   const [fullName, setFullName] = useState('');
   const [profilePhoto, setProfilePhoto] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -197,6 +197,11 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({ navigati
       setLoading(true);
 
       const emailToSave = await AsyncStorage.getItem('user_email');
+
+      // Generate a public C-Pay ID for display and receiving payments.
+      const cpayId = walletReplacement && existingCPayId
+        ? existingCPayId
+        : generateCPayId(emailToSave || '', walletAddress);
 
       // Save locally
       const localWrites = [

@@ -520,7 +520,19 @@ export const RestoreWalletScreen: React.FC<RestoreWalletScreenProps> = ({ naviga
 
           <TouchableOpacity
             style={styles.secondaryButton}
-            onPress={() => navigation.replace('CreatePIN')}
+            onPress={() => AlertManager.alert(
+              'Replace your wallet?',
+              'Your current wallet cannot be recovered without its secret key or backup. Creating a new wallet will deactivate the old wallet binding and move your C-Pay ID to the new wallet. Any funds in the old wallet will remain inaccessible.',
+              [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                  text: 'Replace Wallet',
+                  style: 'destructive',
+                  onPress: () => navigation.replace('CreatePIN', { walletReplacement: true, cpayId }),
+                },
+              ],
+              { type: 'warning' },
+            )}
           >
             <Text style={styles.secondaryButtonText}>Create a New Wallet Instead</Text>
           </TouchableOpacity>
