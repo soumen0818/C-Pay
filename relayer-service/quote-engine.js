@@ -1,6 +1,35 @@
 'use strict';
 
+const crypto = require('crypto');
+
 const RATE_SCALE = 100000000n;
+
+const QUOTE_SIGNATURE_FIELDS = [
+  'sendAmount',
+  'sendCurrency',
+  'amountDebited',
+  'fee',
+  'feeBps',
+  'fxRate',
+  'spreadBps',
+  'recipientAmount',
+  'receiveCurrency',
+  'expiresAt',
+  'ownerId',
+];
+
+function signQuote(quote, secret) {
+  const canonical = QUOTE_SIGNATURE_FIELDS
+    .map((field) => `${field}=${quote[field] === undefined ? '' : String(quote[field])}`)
+    .join('\n');
+  return crypto.createHmac('sha256', secret).update(canonical).digest('hex');
+}
+
+function formatRate(value) {
+  const whole = value / RATE_SCALE;
+  const fraction = String(value % RATE_SCALE).padStart(8, '0').replace(/0+$/, '');
+  return fraction ? `${whole}.${fraction}` : `${whole}.0`;
+}
 
 /**
  * Builds sender-facing remittance quotes without tying the service to a payout
@@ -13,7 +42,10 @@ function createQuoteEngine({
   spreadBps = 0,
   ttlSeconds = 60,
   now = () => Date.now(),
+  signingSecret = '',
+  quoteSignatureSecret,
 } = {}) {
+  const secret = signingSecret || quoteSignatureSecret || '';
   if (!rateProvider || typeof rateProvider.getRate !== 'function') {
     throw new TypeError('rateProvider.getRate must be provided');
   }
@@ -25,7 +57,7 @@ function createQuoteEngine({
   }
 
   return {
-    async createQuote({ sendAmount, sendCurrency, receiveCurrency }) {
+    async createQuote({ sendAmount, sendCurrency, receiveCurrency, ownerId }) {
       const from = assertCurrency(sendCurrency, 'sendCurrency');
       const to = assertCurrency(receiveCurrency, 'receiveCurrency');
       const amountMinor = parseMinorAmount(sendAmount);
@@ -38,28 +70,63 @@ function createQuoteEngine({
       const feeMinor = (amountMinor * BigInt(normalizedFeeBps) + 9999n) / 10000n;
       const expiresAt = new Date(now() + ttlSeconds * 1000).toISOString();
 
-      return {
+      const quote = {
+        ownerId: ownerId || undefined,
         sendAmount: formatMinor(amountMinor),
         sendCurrency: from,
         amountDebited: formatMinor(amountMinor + feeMinor),
         fee: formatMinor(feeMinor),
         feeBps: normalizedFeeBps,
-        fxRate: Number(rateScaled) / Number(RATE_SCALE),
+        fxRate: formatRate(rateScaled),
         spreadBps: normalizedSpreadBps,
         recipientAmount: formatMinor(receiveMinor),
         receiveCurrency: to,
         expiresAt,
         rateMovementPolicy: 'The quoted recipient amount is fixed until expiresAt; settlement must reject expired quotes and obtain a new quote.',
       };
+
+      if (secret) {
+        quote.signature = signQuote(quote, secret);
+      }
+      return quote;
     },
 
-    assertFresh(quote) {
+    assertFreshForOwner(quote, ownerId) {
       if (!quote || !quote.expiresAt || new Date(quote.expiresAt).getTime() <= now()) {
         const error = new Error('Quote has expired; request a new quote');
         error.code = 'QUOTE_EXPIRED';
         throw error;
       }
+
+      if (!secret) {
+        const error = new Error('Quote signing is not configured on this relayer');
+        error.code = 'QUOTE_SIGNING_NOT_CONFIGURED';
+        throw error;
+      }
+
+      if (ownerId && quote.ownerId && quote.ownerId !== ownerId) {
+        const error = new Error('Quote was issued for a different account');
+        error.code = 'QUOTE_OWNER_MISMATCH';
+        throw error;
+      }
+
+      const { signature, ...unsigned } = quote;
+      const expected = signQuote(unsigned, secret);
+      if (
+        typeof signature !== 'string' ||
+        signature.length !== expected.length ||
+        !crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))
+      ) {
+        const error = new Error('Quote signature does not match; request a new quote');
+        error.code = 'QUOTE_SIGNATURE_MISMATCH';
+        throw error;
+      }
+
       return quote;
+    },
+
+    assertFresh(quote) {
+      return this.assertFreshForOwner(quote, null);
     },
   };
 }
@@ -103,4 +170,4 @@ function formatMinor(value) {
   return `${whole}.${fraction}`;
 }
 
-module.exports = { createQuoteEngine };
+module.exports = { createQuoteEngine, signQuote, QUOTE_SIGNATURE_FIELDS };

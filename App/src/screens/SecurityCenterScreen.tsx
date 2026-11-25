@@ -1,5 +1,5 @@
 import { Logger } from '../utils/logger';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 
 // Security center screen: access protection and risk controls overview.
 import {
@@ -10,6 +10,7 @@ import {
   TouchableOpacity,
   Modal,
   Platform,
+  AppState,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
@@ -20,8 +21,14 @@ import {
   isBiometricAvailable,
   getBiometricType,
   enableBiometric,
-  getAuthenticatedWallet,
+  getFreshlyAuthenticatedWallet,
 } from '../utils/biometric';
+import {
+  clearSensitiveClipboard,
+  copySensitiveToClipboard,
+  SENSITIVE_CLIPBOARD_CLEAR_SECONDS,
+} from '../utils/secureClipboard';
+import { useScreenCaptureProtection } from '../utils/screenCapture';
 import {
   clearBiometricBackup,
   hasBiometricBackup,
@@ -32,6 +39,7 @@ import { formatMoneyAmount } from '../utils/currency';
 import { COLORS, SPACING, FONT_SIZES, BORDER_RADIUS, SHADOWS, createThemedStyles, useTheme } from '../constants/theme';
 import { Screen, Header, Section, ActionRow, InfoBanner } from '../components';
 import { AlertManager } from '../utils/alert';
+import { deleteAccount } from '../services/auth';
 
 type ExportedKey = {
   title: string;
@@ -198,14 +206,16 @@ export const SecurityCenterScreen: React.FC<SecurityCenterScreenProps> = ({ navi
   };
 
   const revealWalletKey = async (type: 'private' | 'stellar') => {
-    const wallet = await getAuthenticatedWallet(
+    // Always re-authenticate: an active unlock session is NOT enough to export
+    // the secret seed (#162).
+    const wallet = await getFreshlyAuthenticatedWallet(
       'Export Wallet Key',
       'Enter your C-Pay PIN to export this key',
-      'Export wallet key'
+      'Confirm it\'s you to export your wallet key'
     );
 
     if (!wallet) {
-      AlertManager.alert('Authentication Required', 'Unlock your wallet with PIN or biometric to export keys.');
+      AlertManager.alert('Authentication Required', 'Confirm with your PIN or biometric to export keys.');
       return;
     }
 
@@ -228,6 +238,16 @@ export const SecurityCenterScreen: React.FC<SecurityCenterScreenProps> = ({ navi
 
   const handleCopyExportedKey = async () => {
     if (!exportedKey) return;
+    if (exportedKey.valueLabel === 'Key') {
+      await copySensitiveToClipboard(exportedKey.value);
+      AlertManager.alert(
+        'Copied',
+        `${exportedKey.title} copied. For your safety the clipboard is cleared automatically in ${SENSITIVE_CLIPBOARD_CLEAR_SECONDS} seconds or as soon as you leave C-Pay.`,
+        undefined,
+        { type: 'success' }
+      );
+      return;
+    }
     await Clipboard.setStringAsync(exportedKey.value);
     AlertManager.alert('Copied', `${exportedKey.title} copied to clipboard.`, undefined, { type: 'success' });
   };
@@ -238,6 +258,74 @@ export const SecurityCenterScreen: React.FC<SecurityCenterScreenProps> = ({ navi
   };
 
   const isSecret = exportedKey?.valueLabel === 'Key';
+
+  // Block screenshots / recording while a secret is on screen (#162).
+  const screenCapture = useScreenCaptureProtection('security-center-key-export', isSecret, () => {
+    AlertManager.alert(
+      'Screenshot Detected',
+      'A screenshot was taken while your secret key was visible. Delete it now. Anyone who gets that image can take all of your funds.',
+      undefined,
+      { type: 'warning' }
+    );
+  });
+
+  // Hide the secret if C-Pay leaves the foreground while it is displayed.
+  useEffect(() => {
+    if (!isSecret) return undefined;
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state !== 'active') {
+        setExportedKey(null);
+        setShowExportedKey(false);
+      }
+    });
+    return () => subscription.remove();
+  }, [isSecret]);
+
+  // Leaving the Security Center wipes any secret still on the clipboard.
+  useEffect(() => () => {
+    void clearSensitiveClipboard();
+  }, []);
+
+  const screenCaptureNotice = !isSecret
+    ? null
+    : Platform.OS === 'android' && screenCapture.available
+      ? 'Screenshots and screen recording are blocked while this key is visible.'
+      : Platform.OS === 'ios' && screenCapture.available
+        ? 'iOS cannot block screenshots. Screen recording is blocked, and you will be warned if a screenshot is taken. Do not screenshot this key.'
+        : 'Screenshot protection is unavailable on this device. Do not screenshot or screen-record this key.';
+
+  const handleDeleteAccount = () => {
+    AlertManager.alert(
+      'Delete Account',
+      'Are you sure you want to permanently delete your account? This action removes your profile, C-Pay ID, cloud backup, and all server data. This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete Account',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteAccount();
+              AlertManager.alert('Account Deleted', 'Your account has been deleted successfully.', [
+                {
+                  text: 'OK',
+                  onPress: () =>
+                    navigation.reset({
+                      index: 0,
+                      routes: [{ name: 'Splash' }],
+                    }),
+                },
+              ]);
+            } catch {
+              AlertManager.alert('Delete Failed', 'Unable to delete account. Please try again.', undefined, {
+                type: 'error',
+              });
+            }
+          },
+        },
+      ]
+    );
+  };
 
   return (
     <Screen header={<Header title="Security Center" onBack={() => navigation.goBack()} />}>
@@ -358,6 +446,21 @@ export const SecurityCenterScreen: React.FC<SecurityCenterScreenProps> = ({ navi
         </View>
       </Section>
 
+      {/* Account & data */}
+      <Section title="Account & data">
+        <View style={styles.card}>
+          <ActionRow
+            style={styles.rowFlat}
+            icon="trash-outline"
+            iconColor={COLORS.error}
+            iconBackground={COLORS.error + '15'}
+            title="Delete my account"
+            subtitle="Permanently erase your account, cloud backup, and data"
+            onPress={handleDeleteAccount}
+          />
+        </View>
+      </Section>
+
       {/* Reveal / copy modal */}
       <Modal
         visible={!!exportedKey}
@@ -384,6 +487,15 @@ export const SecurityCenterScreen: React.FC<SecurityCenterScreenProps> = ({ navi
               <Ionicons name="alert-circle-outline" size={18} color={COLORS.warning} />
               <Text style={styles.exportWarningText}>{exportedKey?.warning}</Text>
             </View>
+
+            {isSecret && (
+              <View style={styles.exportWarning}>
+                <Ionicons name="eye-off-outline" size={18} color={COLORS.warning} />
+                <Text style={styles.exportWarningText}>
+                  {screenCaptureNotice} Copied keys are cleared from the clipboard after {SENSITIVE_CLIPBOARD_CLEAR_SECONDS} seconds or when you leave C-Pay.
+                </Text>
+              </View>
+            )}
 
             <View style={styles.exportKeyBox}>
               <Text style={styles.exportKeyLabel}>{exportedKey?.valueLabel || 'Value'}</Text>

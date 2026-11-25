@@ -43,8 +43,8 @@ type RootStackParamList = {
     verifiedEmail?: string;
     walletAddress: string;
     displayName?: string | null;
-    cpayId?: string | null;
     profilePhotoUrl?: string | null;
+    accountSwitch?: boolean;
   };
   Login: undefined;
   MainTabs: undefined;

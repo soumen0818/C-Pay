@@ -464,20 +464,7 @@ export async function recoverPendingPinChange(): Promise<void> {
         await SecureStore.setItemAsync(SLOT_0_KEY, JSON.stringify(bundle));
         await SecureStore.setItemAsync(ACTIVE_SLOT_KEY, '0');
       } else {
-        // Crash before legacy Write 1: roll back pending keys.
-        const currentSalt = await SecureStore.getItemAsync(SALT_KEY);
-        const currentPin = await SecureStore.getItemAsync(PIN_KEY);
-        if (currentWallet && currentSalt && currentPin) {
-          const bundle: StoredWalletBundle = {
-            version: 1,
-            wallet: currentWallet,
-            salt: currentSalt,
-            verifier: currentPin,
-            updatedAt: new Date().toISOString(),
-          };
-          await SecureStore.setItemAsync(SLOT_0_KEY, JSON.stringify(bundle));
-          await SecureStore.setItemAsync(ACTIVE_SLOT_KEY, '0');
-        }
+        // Crash before legacy Write 1: roll back all staged credentials.
       }
 
       await SecureStore.deleteItemAsync(PENDING_WALLET_KEY);
@@ -709,36 +696,51 @@ export async function changeWalletPin(oldPin: string, newPin: string): Promise<v
     throw new Error('Unable to validate staged wallet during PIN change');
   }
 
-  // 4. Stage to next slot and mark pending
-  await SecureStore.setItemAsync(nextSlotKey, JSON.stringify(pendingBundle));
-  await SecureStore.setItemAsync(PENDING_SLOT_KEY, nextSlot);
+  let commitStarted = false;
+  try {
+    // 4. Stage to next slot and mark pending
+    await SecureStore.setItemAsync(nextSlotKey, JSON.stringify(pendingBundle));
+    await SecureStore.setItemAsync(PENDING_SLOT_KEY, nextSlot);
 
-  // Maintain legacy pending keys for backwards compatibility with legacy recovery
-  await SecureStore.setItemAsync(PENDING_WALLET_KEY, pendingWalletJson);
-  await SecureStore.setItemAsync(PENDING_SALT_KEY, pendingSaltHex);
-  await SecureStore.setItemAsync(PENDING_PIN_KEY, pendingVerifierJson);
+    // Maintain legacy pending keys for backwards compatibility with legacy recovery
+    await SecureStore.setItemAsync(PENDING_WALLET_KEY, pendingWalletJson);
+    await SecureStore.setItemAsync(PENDING_SALT_KEY, pendingSaltHex);
+    await SecureStore.setItemAsync(PENDING_PIN_KEY, pendingVerifierJson);
 
-  // ─── 5. ATOMIC COMMIT ───────────────────────────────────────────────────────
-  // One single key write flips old → new atomically.
-  // Before this line: ACTIVE_SLOT_KEY points to currentSlot (old PIN, salt, verifier).
-  // After this line: ACTIVE_SLOT_KEY points to nextSlot (new PIN, salt, verifier).
-  // A crash at ANY time leaves either the old or new slot fully consistent.
-  await SecureStore.setItemAsync(ACTIVE_SLOT_KEY, nextSlot);
+    // ─── 5. ATOMIC COMMIT ───────────────────────────────────────────────────────
+    // One single key write flips old → new atomically.
+    // Before this line: ACTIVE_SLOT_KEY points to currentSlot (old PIN, salt, verifier).
+    // After this line: ACTIVE_SLOT_KEY points to nextSlot (new PIN, salt, verifier).
+    // A crash at ANY time leaves either the old or new slot fully consistent.
+    commitStarted = true;
+    await SecureStore.setItemAsync(ACTIVE_SLOT_KEY, nextSlot);
 
-  // 6. Post-commit: mirror to legacy keys and clean up old slot and pending state
-  await Promise.all([
-    SecureStore.setItemAsync(WALLET_KEY, pendingWalletJson),
-    SecureStore.setItemAsync(SALT_KEY, pendingSaltHex),
-    SecureStore.setItemAsync(PIN_KEY, pendingVerifierJson),
-  ]);
+    // 6. Post-commit: mirror to legacy keys and clean up old slot and pending state
+    await Promise.all([
+      SecureStore.setItemAsync(WALLET_KEY, pendingWalletJson),
+      SecureStore.setItemAsync(SALT_KEY, pendingSaltHex),
+      SecureStore.setItemAsync(PIN_KEY, pendingVerifierJson),
+    ]);
 
-  await Promise.all([
-    SecureStore.deleteItemAsync(PENDING_SLOT_KEY),
-    SecureStore.deleteItemAsync(currentSlotKey),
-    SecureStore.deleteItemAsync(PENDING_WALLET_KEY),
-    SecureStore.deleteItemAsync(PENDING_SALT_KEY),
-    SecureStore.deleteItemAsync(PENDING_PIN_KEY),
-  ]);
+    await Promise.all([
+      SecureStore.deleteItemAsync(PENDING_SLOT_KEY),
+      SecureStore.deleteItemAsync(currentSlotKey),
+      SecureStore.deleteItemAsync(PENDING_WALLET_KEY),
+      SecureStore.deleteItemAsync(PENDING_SALT_KEY),
+      SecureStore.deleteItemAsync(PENDING_PIN_KEY),
+    ]);
+  } catch (error) {
+    if (!commitStarted) {
+      await Promise.all([
+        SecureStore.deleteItemAsync(nextSlotKey),
+        SecureStore.deleteItemAsync(PENDING_SLOT_KEY),
+        SecureStore.deleteItemAsync(PENDING_WALLET_KEY),
+        SecureStore.deleteItemAsync(PENDING_SALT_KEY),
+        SecureStore.deleteItemAsync(PENDING_PIN_KEY),
+      ]);
+    }
+    throw error;
+  }
 
   cachedPinHash = pendingHash;
   cachePinForSession(newPin);
@@ -993,8 +995,9 @@ async function readSecret(pin: string): Promise<string | null> {
     }
   }
 
-  // 2. Fall back to WALLET_KEY or legacy PENDING_WALLET_KEY
-  return (await readSecretAt(pin, WALLET_KEY)) || (await readSecretAt(pin, PENDING_WALLET_KEY));
+  // 2. Fall back to the legacy wallet key. Pending credentials are only
+  // consulted by recoverPendingPinChange().
+  return readSecretAt(pin, WALLET_KEY);
 }
 
 async function readSecretAt(pin: string, keyName: string): Promise<string | null> {

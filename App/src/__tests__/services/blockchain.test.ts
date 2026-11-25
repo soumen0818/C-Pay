@@ -1,4 +1,4 @@
-import { requestAddMoney, sendPayment, transferTokens } from '../../services/blockchain';
+import { getTransactionStatus, requestAddMoney, sendPayment, transferTokens } from '../../services/blockchain';
 import * as StellarSdk from '@stellar/stellar-base';
 
 // Mock global fetch for relayerRequest
@@ -25,12 +25,12 @@ describe('blockchain.ts idempotency key behavior (#33)', () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,
         status: 200,
-        text: async () => JSON.stringify({ exists: true, hasTrustline: true }),
+        json: async () => ({ alreadyReady: true }),
       });
       mockFetch.mockResolvedValueOnce({
         ok: true,
         status: 200,
-        text: async () => JSON.stringify({ hash: 'mock-tx-hash-1' }),
+        json: async () => ({ hash: 'mock-tx-hash-1' }),
       });
 
       const hash = await requestAddMoney(mockWallet as any, intentKey);
@@ -50,12 +50,12 @@ describe('blockchain.ts idempotency key behavior (#33)', () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,
         status: 200,
-        text: async () => JSON.stringify({ exists: true, hasTrustline: true }),
+        json: async () => ({ alreadyReady: true }),
       });
       mockFetch.mockResolvedValueOnce({
         ok: true,
         status: 200,
-        text: async () => JSON.stringify({ hash: 'mock-tx-hash-2' }),
+        json: async () => ({ hash: 'mock-tx-hash-2' }),
       });
 
       await requestAddMoney(mockWallet as any);
@@ -77,13 +77,13 @@ describe('blockchain.ts idempotency key behavior (#33)', () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,
         status: 200,
-        text: async () => JSON.stringify({ exists: true, hasTrustline: true }),
+        json: async () => ({ alreadyReady: true }),
       });
       // 2. loadHorizonAccount
       mockFetch.mockResolvedValueOnce({
         ok: true,
         status: 200,
-        text: async () => JSON.stringify({
+        json: async () => ({
           id: mockWallet.publicKey,
           sequence: '100',
           balances: [{ asset_type: 'credit_alphanum4', asset_code: 'USDC', balance: '500.0000000' }],
@@ -93,7 +93,7 @@ describe('blockchain.ts idempotency key behavior (#33)', () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,
         status: 200,
-        text: async () => JSON.stringify({ hash: 'tx-payment-hash-1', status: 'success' }),
+        json: async () => ({ hash: 'tx-payment-hash-1', status: 'success' }),
       });
 
       const hash = await transferTokens(mockWallet as any, destination, '25.00', {
@@ -110,5 +110,15 @@ describe('blockchain.ts idempotency key behavior (#33)', () => {
       expect(body.idempotencyKey).toBe(intentKey);
       expect(body.idempotencyKey).not.toMatch(/\b\d{13}\b/);
     });
+  });
+
+  test('preserves a not_found status so the monitor can apply its timeout policy', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ status: 'not_found' }),
+    });
+
+    await expect(getTransactionStatus('a'.repeat(64))).resolves.toBe('not_found');
   });
 });

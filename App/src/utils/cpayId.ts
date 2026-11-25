@@ -3,9 +3,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../services/supabase';
 
 /**
- * C-Pay ID System - User-friendly identifier instead of wallet addresses
- * Format: email-handle@cpay+walletHash
- * Example: soumen0818@cpayk8f3qz
+ * C-Pay ID System - User-friendly identifier instead of wallet addresses.
+ * IDs are assigned and persisted by the database when a user row is created.
  *
  * This is ONLY for UI display. Payment operations still use actual Stellar accounts.
  */
@@ -32,109 +31,40 @@ export function formatWalletFingerprint(walletAddress: string): string {
   return `C-Pay wallet #${getWalletFingerprint(walletAddress).toUpperCase()}`;
 }
 
-function isLegacyAddressSuffixId(cpayId: string | null | undefined, walletAddress: string): boolean {
-  if (!cpayId) {
-    return false;
-  }
-
-  const suffix = cpayId.split('@cpay')[1]?.toLowerCase();
-  return suffix === walletAddress.trim().toLowerCase().slice(-4);
-}
-
-function isGeneratedCPayIdOutdated(
-  cpayId: string | null | undefined,
-  preferredIdentifier: string,
-  walletAddress: string
-): boolean {
-  if (!cpayId || isLegacyAddressSuffixId(cpayId, walletAddress)) {
-    return true;
-  }
-
-  return Boolean(preferredIdentifier) && cpayId.toLowerCase() !== generateCPayId(preferredIdentifier, walletAddress);
-}
-
-async function getStoredEmail(): Promise<string | null> {
-  return AsyncStorage.getItem('user_email');
-}
-
-function normalizeCPayHandle(identifier: string): string {
-  const trimmed = identifier.trim().toLowerCase();
-  const emailLocalPart = trimmed.includes('@') ? trimmed.split('@')[0] : '';
-
-  if (emailLocalPart) {
-    const withoutPlusTag = emailLocalPart.split('+')[0];
-    const emailHandle = withoutPlusTag
-      .replace(/[^a-z0-9._-]/g, '')
-      .replace(/^[._-]+|[._-]+$/g, '')
-      .slice(0, 20);
-
-    return emailHandle.length >= 3 ? emailHandle : 'user';
-  }
-
-  return 'user';
-}
-
 /**
- * Generate C-Pay ID from the verified email and wallet address.
- * @param identifier - Verified user email.
- * @param walletAddress - Stellar account address
- * @returns C-Pay ID (e.g., "soumen0818@cpayk8f3qz")
- */
-export function generateCPayId(identifier: string, walletAddress: string): string {
-  const handle = normalizeCPayHandle(identifier);
-  const suffix = getWalletFingerprint(walletAddress);
-
-  return `${handle}@cpay${suffix}`;
-}
-
-/**
- * Get C-Pay ID for current user from database or generate a local fallback.
- * Missing or legacy address-suffix IDs are repaired in Supabase when possible.
+ * Return only the C-Pay ID persisted for the current wallet.
+ * Local storage is a cache; it is never used as an authority or fallback.
  */
 export async function getCurrentUserCPayId(): Promise<string | null> {
+  const walletAddress = await AsyncStorage.getItem('wallet_address');
+
+  if (!walletAddress) {
+    await AsyncStorage.removeItem('cpay_id');
+    return null;
+  }
+
   try {
-    const walletAddress = await AsyncStorage.getItem('wallet_address');
-
-    if (!walletAddress) {
-      return null;
-    }
-
-    const localEmail = await getStoredEmail();
-    const localId = generateCPayId(localEmail || '', walletAddress);
-
-    // Fetch from database first, then self-heal missing/legacy IDs.
     const { data, error } = await supabase
       .from('users')
-      .select('cpay_id, email')
+      .select('cpay_id')
       .eq('wallet_address', walletAddress)
       .single();
 
-    const preferredIdentifier = data?.email || localEmail || '';
-    if (!error && data?.cpay_id && !isGeneratedCPayIdOutdated(data.cpay_id, preferredIdentifier, walletAddress)) {
-      await AsyncStorage.setItem('cpay_id', data.cpay_id);
-      return data.cpay_id;
+    if (error && error.code !== 'PGRST116') {
+      throw error;
     }
 
-    const generatedId = generateCPayId(preferredIdentifier, walletAddress);
-
-    await AsyncStorage.setItem('cpay_id', generatedId);
-
-    if (!error && data) {
-      await supabase
-        .from('users')
-        .update({ cpay_id: generatedId })
-        .eq('wallet_address', walletAddress);
-    }
-
-    return generatedId || localId;
-  } catch (error) {
-    Logger.error('Error getting current user C-Pay ID:', error);
-    const walletAddress = await AsyncStorage.getItem('wallet_address');
-    if (!walletAddress) {
+    if (!data?.cpay_id) {
+      await AsyncStorage.removeItem('cpay_id');
       return null;
     }
-    const email = await getStoredEmail();
-    return generateCPayId(email || '', walletAddress);
+
+    await AsyncStorage.setItem('cpay_id', data.cpay_id);
+    return data.cpay_id;
+  } catch (error) {
+    await AsyncStorage.removeItem('cpay_id');
+    Logger.error('Error getting current user C-Pay ID:', error);
+    throw error;
   }
 }
 
@@ -149,7 +79,7 @@ export async function getCPayIdByWallet(walletAddress: string): Promise<string |
       p_wallet_address: walletAddress,
     });
 
-    if (!error && Array.isArray(data) && data[0]?.cpay_id && !isLegacyAddressSuffixId(data[0].cpay_id, walletAddress)) {
+    if (!error && Array.isArray(data) && data[0]?.cpay_id) {
       return data[0].cpay_id;
     }
 
@@ -206,7 +136,7 @@ export function formatCPayIdForDisplay(cpayId: string): string {
  * @returns true if valid C-Pay ID format
  */
 export function isValidCPayId(id: string): boolean {
-  const pattern = /^[a-z0-9._-]{3,20}@cpay[a-z0-9]{4,8}$/i;
+  const pattern = /^[a-z0-9._-]{3,20}@cpay[a-z0-9]{4,32}$/i;
   return pattern.test(id);
 }
 
@@ -216,7 +146,7 @@ export function isValidCPayId(id: string): boolean {
  * @returns Wallet hash suffix or null
  */
 export function extractLast4FromCPayId(cpayId: string): string | null {
-  const match = cpayId.match(/@cpay([a-z0-9]{4,8})$/i);
+  const match = cpayId.match(/@cpay([a-z0-9]{4,32})$/i);
   return match ? match[1] : null;
 }
 

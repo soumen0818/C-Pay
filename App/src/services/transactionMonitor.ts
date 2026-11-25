@@ -10,14 +10,20 @@ import { updateTransactionStatus, getTransactions } from './storage';
 let isPolling = false;
 let pollingInterval: NodeJS.Timeout | null = null;
 
+// A submitted hash that Horizon still cannot find after this window is not a
+// pending ledger transaction. Keep the window aligned with the foreground
+// confirmation flow (24 × 2.5s + 12 × 5s).
+export const TRANSACTION_NOT_FOUND_TIMEOUT_MS = 120_000;
+const NOT_FOUND_FAILURE_REASON = 'Transaction was not found on Stellar before confirmation timed out.';
+
 /**
  * Check status of a single transaction and update if confirmed
  * Phase 2: Updated to handle internal_status and user_visible_status
  */
-export async function checkTransactionStatus(txHash: string): Promise<void> {
+export async function checkTransactionStatus(txHash: string): Promise<string> {
   try {
     if (!isValidTransactionHash(txHash)) {
-      return;
+      return 'unknown';
     }
 
     const status = await getTransactionStatus(txHash);
@@ -37,9 +43,10 @@ export async function checkTransactionStatus(txHash: string): Promise<void> {
         undefined,
         'Transaction failed on blockchain'
       );
-    } else if (status === 'pending') {
     }
+    return status;
   } catch (error) {
+    return 'unknown';
   }
 }
 
@@ -60,7 +67,16 @@ export async function pollPendingTransactions(): Promise<void> {
     
     // Check each pending transaction
     for (const tx of pendingTxs) {
-      await checkTransactionStatus(tx.tx_hash);
+      const status = await checkTransactionStatus(tx.tx_hash);
+      if (status === 'not_found' && hasNotFoundTimedOut(tx)) {
+        await updateTransactionStatus(
+          tx.tx_hash,
+          'failed',
+          'failed',
+          undefined,
+          NOT_FOUND_FAILURE_REASON
+        );
+      }
     }
   } catch (error) {
   }
@@ -112,7 +128,8 @@ export async function waitForTransactionConfirmation(
   maxAttempts: number = 60,
   intervalMs: number = 5000
 ): Promise<'success' | 'failed' | 'timeout'> {
-  
+  let wasNotFound = false;
+
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const status = await getTransactionStatus(txHash);
     
@@ -134,13 +151,36 @@ export async function waitForTransactionConfirmation(
       );
       return 'failed';
     }
+
+    wasNotFound ||= status === 'not_found';
     
     // Wait before next attempt
-    await new Promise(resolve => setTimeout(resolve, intervalMs));
+    if (attempt < maxAttempts) {
+      await new Promise(resolve => setTimeout(resolve, intervalMs));
+    }
   }
   
-  // Timeout
+  // A Horizon 404 means the submitted hash never reached the network. Unlike
+  // a transient transport error, it can safely become a terminal failure once
+  // the confirmation window has elapsed.
+  if (wasNotFound) {
+    await updateTransactionStatus(
+      txHash,
+      'failed',
+      'failed',
+      undefined,
+      NOT_FOUND_FAILURE_REASON
+    );
+  }
+
   return 'timeout';
+}
+
+function hasNotFoundTimedOut(tx: { created_at?: string; submitted_at?: string }): boolean {
+  const submittedAt = tx.submitted_at || tx.created_at;
+  const submittedAtMs = submittedAt ? new Date(submittedAt).getTime() : NaN;
+  return Number.isFinite(submittedAtMs)
+    && Date.now() - submittedAtMs >= TRANSACTION_NOT_FOUND_TIMEOUT_MS;
 }
 
 /**

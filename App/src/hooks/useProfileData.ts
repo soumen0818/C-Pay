@@ -19,8 +19,13 @@ export const useProfileData = () => {
   };
 
   const loadCPayId = async () => {
-    const id = await getCurrentUserCPayId();
-    if (id) setCpayId(id);
+    try {
+      const id = await getCurrentUserCPayId();
+      setCpayId(id || '');
+    } catch (error) {
+      Logger.error('Error loading C-Pay ID:', error);
+      setCpayId('');
+    }
   };
 
   const loadDisplayName = async () => {
@@ -102,6 +107,13 @@ export const useProfileData = () => {
       const address = await AsyncStorage.getItem('wallet_address');
       if (!address) return null;
 
+      const { data: sessionData } = await supabase.auth.getSession();
+      const authUserId = sessionData.session?.user?.id || (await supabase.auth.getUser()).data.user?.id;
+      if (!authUserId) {
+        Logger.error('User not authenticated for avatar upload');
+        return null;
+      }
+
       const base64 = await fetch(photoUri)
         .then(res => res.blob())
         .then(blob => {
@@ -116,9 +128,19 @@ export const useProfileData = () => {
           });
         });
 
-      const fileExt = photoUri.split('.').pop()?.split('?')[0] || 'jpg';
-      const fileName = `${address.substring(0, 8)}_${Date.now()}.${fileExt}`;
-      const filePath = `profile-photos/${fileName}`;
+      const fileExt = photoUri.split('.').pop()?.split('?')[0]?.toLowerCase() || 'jpg';
+      let contentType = 'image/jpeg';
+      if (fileExt === 'png') {
+        contentType = 'image/png';
+      } else if (fileExt === 'webp') {
+        contentType = 'image/webp';
+      } else if (fileExt === 'gif') {
+        contentType = 'image/gif';
+      } else {
+        contentType = 'image/jpeg';
+      }
+
+      const filePath = `${authUserId}/avatar.jpg`;
 
       const binaryString = atob(base64);
       const bytes = new Uint8Array(binaryString.length);
@@ -126,10 +148,15 @@ export const useProfileData = () => {
         bytes[i] = binaryString.charCodeAt(i);
       }
 
+      if (bytes.length > 5242880) {
+        Logger.error('Profile photo exceeds 5MB limit');
+        return null;
+      }
+
       const { error: uploadError } = await supabase.storage
         .from('profile-images')
         .upload(filePath, bytes.buffer, {
-          contentType: `image/${fileExt}`,
+          contentType,
           upsert: true,
         });
 
@@ -142,7 +169,7 @@ export const useProfileData = () => {
         .from('profile-images')
         .getPublicUrl(filePath);
 
-      const publicUrl = urlData.publicUrl;
+      const publicUrl = `${urlData.publicUrl}?t=${Date.now()}`;
 
       const { error: dbError } = await supabase
         .from('users')
@@ -152,6 +179,7 @@ export const useProfileData = () => {
       if (dbError) Logger.error('Database update error:', dbError);
 
       await AsyncStorage.setItem('profile_photo', publicUrl);
+      setProfilePhoto(publicUrl);
       return publicUrl;
     } catch (error) {
       Logger.error('Error uploading profile photo:', error);

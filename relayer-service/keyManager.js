@@ -13,12 +13,12 @@ const StellarSdk = require('@stellar/stellar-sdk');
 
 class KeyManager {
   constructor(config = {}) {
-    this.provider = (process.env.SIGNER_PROVIDER || 'env').toLowerCase();
+    this.provider = (config.provider || process.env.SIGNER_PROVIDER || 'env').toLowerCase();
     this.signers = new Map();
     this.activityLog = [];
     this.alertWebhookUrl = config.alertWebhookUrl || process.env.ALERT_WEBHOOK_URL || null;
     this.signingVelocityWindowMs = 60000;
-    this.maxSignsPerMinute = Number(process.env.MAX_SIGNS_PER_MINUTE || 120);
+    this.maxSignsPerMinute = Number(config.maxSignsPerMinute || process.env.MAX_SIGNS_PER_MINUTE || 120);
 
     this.initSigners(config);
   }
@@ -35,6 +35,10 @@ class KeyManager {
   createSigner(role, secretOrKmsId) {
     if (!secretOrKmsId) {
       throw new Error(`Missing key or KMS resource identifier for signer role: ${role}`);
+    }
+
+    if (!['env', 'kms', 'vault'].includes(this.provider)) {
+      throw new Error(`Unsupported SIGNER_PROVIDER: '${this.provider}'. Supported providers are: env, kms, vault.`);
     }
 
     if (this.provider === 'kms' || this.provider === 'vault' || secretOrKmsId.startsWith('kms://')) {
@@ -146,6 +150,7 @@ class KeyManager {
         await fetch(this.alertWebhookUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          signal: typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function' ? AbortSignal.timeout(5000) : undefined,
           body: JSON.stringify({
             service: 'cpay-key-custody',
             ...payload,

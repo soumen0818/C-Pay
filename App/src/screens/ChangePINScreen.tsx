@@ -14,6 +14,7 @@ import { Screen } from '../components';
 import { cachePinForSession, unlockWithPin, changeWalletPin } from '../services/wallet';
 import { COLORS, SPACING, TYPOGRAPHY, BORDER_RADIUS, createThemedStyles, useTheme } from '../constants/theme';
 import { AlertManager } from '../utils/alert';
+import { isWeakPin } from '../utils/pin';
 
 const FONT_SIZES = TYPOGRAPHY.sizes;
 
@@ -70,8 +71,8 @@ export const ChangePINScreen: React.FC<ChangePINScreenProps> = ({ navigation }) 
       return;
     }
     
-    // Check for sequential patterns
-    if (pin === '123456' || pin === '654321' || pin === '000000' || pin === '111111') {
+    // Check for weak PINs
+    if (isWeakPin(pin)) {
       setError('Please choose a stronger PIN');
       setTimeout(() => setNewPin(''), 300);
       return;
