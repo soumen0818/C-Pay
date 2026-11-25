@@ -21,7 +21,6 @@ import { supabase } from '../services/supabase';
 import { COLORS, SPACING, FONT_SIZES, BORDER_RADIUS, SHADOWS, createThemedStyles, useTheme } from '../constants/theme';
 import { Button, OnboardingProgress, FormField, InfoBanner } from '../components';
 import { AlertManager } from '../utils/alert';
-import { generateCPayId } from '../utils/cpayId';
 
 interface ProfileSetupScreenProps {
   navigation: any;
@@ -60,9 +59,16 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({ navigati
     }
   };
 
-  const uploadProfilePhoto = async (photoUri: string, address: string): Promise<string | null> => {
+  const uploadProfilePhoto = async (photoUri: string, _address: string): Promise<string | null> => {
     try {
       Logger.info('Uploading profile photo...');
+
+      const { data: sessionData } = await supabase.auth.getSession();
+      const authUserId = sessionData.session?.user?.id || (await supabase.auth.getUser()).data.user?.id;
+      if (!authUserId) {
+        Logger.error('User not authenticated for avatar upload');
+        return null;
+      }
 
       // Read file as base64
       const base64 = await fetch(photoUri)
@@ -79,9 +85,19 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({ navigati
           });
         });
 
-      const fileExt = photoUri.split('.').pop()?.split('?')[0] || 'jpg';
-      const fileName = `${address.substring(0, 8)}_${Date.now()}.${fileExt}`;
-      const filePath = `profile-photos/${fileName}`;
+      const fileExt = photoUri.split('.').pop()?.split('?')[0]?.toLowerCase() || 'jpg';
+      let contentType = 'image/jpeg';
+      if (fileExt === 'png') {
+        contentType = 'image/png';
+      } else if (fileExt === 'webp') {
+        contentType = 'image/webp';
+      } else if (fileExt === 'gif') {
+        contentType = 'image/gif';
+      } else {
+        contentType = 'image/jpeg';
+      }
+
+      const filePath = `${authUserId}/avatar.jpg`;
 
       // Convert base64 to array buffer
       const binaryString = atob(base64);
@@ -90,11 +106,16 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({ navigati
         bytes[i] = binaryString.charCodeAt(i);
       }
 
+      if (bytes.length > 5242880) {
+        Logger.error('Profile photo exceeds 5MB limit');
+        return null;
+      }
+
       // Upload to Supabase Storage
       const { error: uploadError } = await supabase.storage
         .from('profile-images')
         .upload(filePath, bytes.buffer, {
-          contentType: `image/${fileExt}`,
+          contentType,
           upsert: true,
         });
 
@@ -108,7 +129,7 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({ navigati
         .from('profile-images')
         .getPublicUrl(filePath);
 
-      return urlData.publicUrl;
+      return `${urlData.publicUrl}?t=${Date.now()}`;
     } catch (error) {
       Logger.error('Error uploading photo:', error);
       return null;
@@ -118,9 +139,11 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({ navigati
   const completeProfileSetup = async (
     name: string,
     emailToSave: string | null,
-    cpayId: string,
     photoUri: string | null
   ): Promise<void> => {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const authUserId = sessionData.session?.user?.id || (await supabase.auth.getUser()).data.user?.id || null;
+
     let photoUrl: string | null = null;
 
     if (photoUri) {
@@ -130,10 +153,7 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({ navigati
       }
     }
 
-    const { data: sessionData } = await supabase.auth.getSession();
-    const authUserId = sessionData.session?.user.id || null;
-
-    const { error: dbError } = await supabase
+    const { data, error: dbError } = await supabase
       .from('users')
       .upsert(
         {
@@ -141,15 +161,23 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({ navigati
           wallet_address: walletAddress,
           display_name: name,
           email: emailToSave,
-          cpay_id: cpayId,
           profile_photo_url: photoUrl,
         },
         { onConflict: 'wallet_address' }
-      );
+      )
+      .select('cpay_id')
+      .single();
 
     if (dbError) {
       Logger.error('Database error:', dbError);
+      throw dbError;
     }
+
+    if (!data?.cpay_id) {
+      throw new Error('The database did not assign a C-Pay ID to this wallet.');
+    }
+
+    await AsyncStorage.setItem('cpay_id', data.cpay_id);
   };
 
   const handleComplete = async () => {
@@ -178,8 +206,6 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({ navigati
       // Save locally
       const localWrites = [
         AsyncStorage.setItem('display_name', trimmedName),
-        AsyncStorage.setItem('cpay_id', cpayId),
-        AsyncStorage.setItem('profile_complete', 'true'),
         AsyncStorage.setItem('cloud_backup_required', 'true'),
         AsyncStorage.setItem('cloud_backup_complete', 'false'),
       ];
@@ -191,7 +217,8 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({ navigati
       await Promise.all(localWrites);
 
       // Complete profile upload/cloud save here so the next screen opens cleanly.
-      await completeProfileSetup(trimmedName, emailToSave, cpayId, profilePhoto);
+      await completeProfileSetup(trimmedName, emailToSave, profilePhoto);
+      await AsyncStorage.setItem('profile_complete', 'true');
 
       // Cloud backup protects the wallet before optional biometric setup.
       navigation.replace('CloudBackupSetup');

@@ -47,6 +47,14 @@ This starts the local Supabase stack and applies the complete root migration
 chain in filename order. Obtain the local Project URL, anon key, and service-role
 key from the command output.
 
+#### Database Migration Guidelines
+
+- **Never edit applied migrations**: Migrations are strictly append-only. Because migrations have already run in pilot and production environments, applied migrations must **never** be edited, renamed, or deleted. Rewriting migration history causes checksum discrepancies and broken schemas across environments.
+- **Forward-fix policy**: C-Pay follows a forward-fix (roll-forward) migration policy. Rollback scripts cannot safely restore dropped data, tables, or columns; any necessary schema fix, revert, or drop must be implemented by authoring a new forward-running migration.
+- **Idempotency**: All migrations must be idempotent and safely re-runnable against existing databases. Use `CREATE TABLE IF NOT EXISTS`, `DROP TABLE IF EXISTS`, and always precede `CREATE POLICY` statements with `DROP POLICY IF EXISTS`.
+- **Built-in UUID generation**: Use PostgreSQL's built-in `gen_random_uuid()` rather than `uuid_generate_v4()` from `uuid-ossp` for primary keys and UUID column defaults.
+- **Privilege & RLS Lockdown**: All client-facing tables must enable Row Level Security (RLS). Explicitly revoke privileges from `anon` and `authenticated` roles, granting only least-privilege operations.
+
 ### 3. Environment Configuration
 Clone the repo and install dependencies:
 ```bash

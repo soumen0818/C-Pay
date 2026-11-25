@@ -1,144 +1,118 @@
-/**
- * Unit tests for cpayId utility functions.
- * These cover pure synchronous functions only; async DB-dependent helpers are excluded.
- */
-
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { supabase } from '../../services/supabase';
 import {
-  generateCPayId,
+  extractLast4FromCPayId,
+  formatWalletFingerprint,
+  getCurrentUserCPayId,
   getWalletFingerprint,
   isValidCPayId,
-  extractLast4FromCPayId,
 } from '../../utils/cpayId';
 
-// Fixed wallet address used across tests
 const WALLET_A = 'GBGJS2UIEF2DYN3L67P2A7X62M4WK72JGTF7ABCOQL75UYHMWYLFRI4S';
 const WALLET_B = 'GAKUELFFUKSAJMTECN2SVXDRJOUJXDE27OPTD57SA65KJ6AU32SXKF27';
 
+const resetUserQuery = () => {
+  const query = {
+    select: jest.fn(),
+    eq: jest.fn(),
+    single: jest.fn().mockResolvedValue({
+      data: null,
+      error: { code: 'PGRST116' },
+    }),
+  };
+  query.select.mockReturnValue(query);
+  query.eq.mockReturnValue(query);
+  (supabase.from as jest.Mock).mockReturnValue(query);
+  return query;
+};
+
+beforeEach(async () => {
+  jest.clearAllMocks();
+  await AsyncStorage.clear();
+  resetUserQuery();
+});
+
 describe('getWalletFingerprint', () => {
-  test('returns a lowercase alphanumeric string of the requested length', () => {
-    const fp = getWalletFingerprint(WALLET_A);
-    expect(fp).toMatch(/^[a-z0-9]+$/);
-    expect(fp.length).toBe(6);
+  test('returns a deterministic lowercase alphanumeric fingerprint', () => {
+    const fingerprint = getWalletFingerprint(WALLET_A);
+    expect(fingerprint).toMatch(/^[a-z0-9]+$/);
+    expect(fingerprint).toHaveLength(6);
+    expect(getWalletFingerprint(WALLET_A)).toBe(fingerprint);
+    expect(getWalletFingerprint(WALLET_A.toLowerCase())).toBe(fingerprint);
   });
 
-  test('is deterministic — same wallet always produces the same fingerprint', () => {
-    expect(getWalletFingerprint(WALLET_A)).toBe(getWalletFingerprint(WALLET_A));
-  });
-
-  test('is case-insensitive — upper and lower-case wallet produce the same fingerprint', () => {
-    expect(getWalletFingerprint(WALLET_A.toLowerCase())).toBe(
-      getWalletFingerprint(WALLET_A.toUpperCase())
+  test('supports custom lengths and formats the display fallback', () => {
+    expect(getWalletFingerprint(WALLET_A, 4)).toHaveLength(4);
+    expect(getWalletFingerprint(WALLET_A, 8)).toHaveLength(8);
+    expect(formatWalletFingerprint(WALLET_A)).toBe(
+      `C-Pay wallet #${getWalletFingerprint(WALLET_A).toUpperCase()}`
     );
   });
 
-  test('different wallets produce different fingerprints', () => {
+  test('different wallets normally have different display fingerprints', () => {
     expect(getWalletFingerprint(WALLET_A)).not.toBe(getWalletFingerprint(WALLET_B));
-  });
-
-  test('respects a custom length argument', () => {
-    expect(getWalletFingerprint(WALLET_A, 4)).toHaveLength(4);
-    expect(getWalletFingerprint(WALLET_A, 8)).toHaveLength(8);
-  });
-});
-
-describe('generateCPayId', () => {
-  test('creates expected format: handle@cpay<suffix>', () => {
-    const id = generateCPayId('soumen0818@gmail.com', WALLET_A);
-    expect(id).toMatch(/^[a-z0-9._-]+@cpay[a-z0-9]+$/);
-  });
-
-  test('uses the email local-part as the handle', () => {
-    const id = generateCPayId('alice@example.com', WALLET_A);
-    expect(id.startsWith('alice@cpay')).toBe(true);
-  });
-
-  test('strips email plus-tags from the handle', () => {
-    const id = generateCPayId('alice+test@example.com', WALLET_A);
-    expect(id.startsWith('alice@cpay')).toBe(true);
-  });
-
-  test('strips special characters from the handle except . _ -', () => {
-    const id = generateCPayId('alice!#$@example.com', WALLET_A);
-    expect(id.startsWith('alice@cpay')).toBe(true);
-  });
-
-  test('truncates overly long handles to 20 characters', () => {
-    const longEmail = 'averylongemailhandle1234567890@example.com';
-    const id = generateCPayId(longEmail, WALLET_A);
-    const handle = id.split('@cpay')[0];
-    expect(handle.length).toBeLessThanOrEqual(20);
-  });
-
-  test('falls back to "user" when the email local part is too short', () => {
-    const id = generateCPayId('ab@example.com', WALLET_A);
-    expect(id.startsWith('user@cpay')).toBe(true);
-  });
-
-  test('falls back to "user" for a non-email identifier (auth is email-only)', () => {
-    const id = generateCPayId('+919876543210', WALLET_A);
-    expect(id.startsWith('user@cpay')).toBe(true);
-  });
-
-  test('falls back to "user" when identifier is empty', () => {
-    const id = generateCPayId('', WALLET_A);
-    expect(id.startsWith('user@cpay')).toBe(true);
-  });
-
-  test('is deterministic — same inputs always produce the same ID', () => {
-    const id1 = generateCPayId('test@example.com', WALLET_A);
-    const id2 = generateCPayId('test@example.com', WALLET_A);
-    expect(id1).toBe(id2);
-  });
-
-  test('different wallets produce different IDs for the same email', () => {
-    const id1 = generateCPayId('test@example.com', WALLET_A);
-    const id2 = generateCPayId('test@example.com', WALLET_B);
-    expect(id1).not.toBe(id2);
   });
 });
 
 describe('isValidCPayId', () => {
-  test('accepts a properly formed C-Pay ID', () => {
+  test('accepts both existing IDs and the new 64-bit random suffix format', () => {
     expect(isValidCPayId('alice@cpayk8f3qz')).toBe(true);
-    expect(isValidCPayId('soumen0818@cpayk8f3qz')).toBe(true);
+    expect(isValidCPayId('alice@cpay1234567890abcdef')).toBe(true);
+    expect(isValidCPayId('first.last@cpay1234567890abcdef')).toBe(true);
+    // Random, non-identifying handles assigned by the database (#161).
+    expect(isValidCPayId('user3f9a0c@cpay1234567890abcdef')).toBe(true);
   });
 
-  test('accepts IDs with dots, underscores, and hyphens in the handle', () => {
-    expect(isValidCPayId('first.last@cpayk8f3qz')).toBe(true);
-    expect(isValidCPayId('user_name@cpayk8f3qz')).toBe(true);
-    expect(isValidCPayId('user-name@cpayk8f3qz')).toBe(true);
-  });
-
-  test('rejects IDs without the @cpay separator', () => {
+  test('rejects malformed IDs and suffixes longer than 32 characters', () => {
     expect(isValidCPayId('alice@gmail.com')).toBe(false);
-    expect(isValidCPayId('alicecpayk8f3qz')).toBe(false);
-  });
-
-  test('rejects IDs where the handle is shorter than 3 characters', () => {
-    expect(isValidCPayId('ab@cpayk8f3')).toBe(false);
-  });
-
-  test('rejects IDs where the suffix is shorter than 4 characters', () => {
-    expect(isValidCPayId('alice@cpayab')).toBe(false);
-  });
-
-  test('rejects empty string', () => {
+    expect(isValidCPayId('ab@cpayk8f3qz')).toBe(false);
+    expect(isValidCPayId(`alice@cpay${'a'.repeat(33)}`)).toBe(false);
     expect(isValidCPayId('')).toBe(false);
-  });
-
-  test('rejects plain Stellar account IDs', () => {
     expect(isValidCPayId(WALLET_A)).toBe(false);
   });
 });
 
 describe('extractLast4FromCPayId', () => {
-  test('extracts the suffix from a valid C-Pay ID', () => {
-    const id = 'alice@cpayk8f3qz';
-    expect(extractLast4FromCPayId(id)).toBe('k8f3qz');
+  test('extracts existing and new random suffixes', () => {
+    expect(extractLast4FromCPayId('alice@cpayk8f3qz')).toBe('k8f3qz');
+    expect(extractLast4FromCPayId('alice@cpay1234567890abcdef')).toBe('1234567890abcdef');
   });
 
-  test('returns null for a non-C-Pay ID string', () => {
+  test('returns null for non-C-Pay IDs', () => {
     expect(extractLast4FromCPayId('alice@gmail.com')).toBeNull();
     expect(extractLast4FromCPayId('')).toBeNull();
+  });
+});
+
+describe('getCurrentUserCPayId', () => {
+  test('returns and caches only the ID persisted for the wallet', async () => {
+    const persistedId = 'alice@cpay1234567890abcdef';
+    const query = resetUserQuery();
+    query.single.mockResolvedValue({ data: { cpay_id: persistedId }, error: null });
+    await AsyncStorage.setItem('wallet_address', WALLET_A);
+
+    await expect(getCurrentUserCPayId()).resolves.toBe(persistedId);
+    await expect(AsyncStorage.getItem('cpay_id')).resolves.toBe(persistedId);
+  });
+
+  test('clears a stale cached ID when the database has no profile', async () => {
+    await AsyncStorage.setItem('wallet_address', WALLET_A);
+    await AsyncStorage.setItem('cpay_id', 'stale@cpay000000');
+
+    await expect(getCurrentUserCPayId()).resolves.toBeNull();
+    await expect(AsyncStorage.getItem('cpay_id')).resolves.toBeNull();
+  });
+
+  test('does not return a cached ID when the database lookup fails', async () => {
+    const query = resetUserQuery();
+    query.single.mockResolvedValue({
+      data: null,
+      error: { code: 'NETWORK_ERROR', message: 'offline' },
+    });
+    await AsyncStorage.setItem('wallet_address', WALLET_A);
+    await AsyncStorage.setItem('cpay_id', 'stale@cpay000000');
+
+    await expect(getCurrentUserCPayId()).rejects.toMatchObject({ code: 'NETWORK_ERROR' });
+    await expect(AsyncStorage.getItem('cpay_id')).resolves.toBeNull();
   });
 });

@@ -13,7 +13,13 @@ import {
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
-import { sendLoginEmailOTP, verifyLoginEmailOTP, getRemainingAttempts } from '../services/auth';
+import {
+  clearCachedAccountData,
+  sendLoginEmailOTP,
+  verifyLoginEmailOTP,
+  getRemainingAttempts,
+  WALLET_AUTH_USER_ID_KEY,
+} from '../services/auth';
 import { hasWallet } from '../services/wallet';
 import { supabase } from '../services/supabase';
 import { COLORS, SPACING, TYPOGRAPHY, BORDER_RADIUS, SHADOWS, createThemedStyles, useTheme } from '../constants/theme';
@@ -44,7 +50,6 @@ const USER_EMAIL_KEY = 'user_email';
 type ExistingUserProfile = {
   wallet_address: string;
   display_name?: string | null;
-  cpay_id?: string | null;
   profile_photo_url?: string | null;
 };
 
@@ -132,7 +137,7 @@ export const EmailVerificationScreen: React.FC<EmailVerificationScreenProps> = (
 
     const { data, error } = await supabase
       .from('users')
-      .select('wallet_address, display_name, cpay_id, profile_photo_url')
+      .select('wallet_address, display_name, profile_photo_url')
       .eq('auth_user_id', userId)
       .maybeSingle();
 
@@ -225,20 +230,41 @@ export const EmailVerificationScreen: React.FC<EmailVerificationScreenProps> = (
         [USER_EMAIL_KEY, verifiedEmail],
       ]);
 
-      // Check if user already has a wallet (returning user after sign out)
+      const existingProfile = await loadExistingUserProfile();
       const walletExists = await hasWallet();
 
       if (walletExists) {
-        navigation.replace('Login');
-      } else {
-        const existingProfile = await loadExistingUserProfile();
+        const localWalletAddress = await AsyncStorage.getItem('wallet_address');
+        const walletOwnerId = await AsyncStorage.getItem(WALLET_AUTH_USER_ID_KEY);
+        const { data: userData } = await supabase.auth.getUser();
+        const verifiedUserId = userData.user?.id;
+        const profileWalletMatches =
+          !!localWalletAddress &&
+          !!existingProfile?.wallet_address &&
+          localWalletAddress === existingProfile.wallet_address;
+        const ownerMatches = !walletOwnerId || walletOwnerId === verifiedUserId;
 
+        if (profileWalletMatches && ownerMatches) {
+          if (verifiedUserId && !walletOwnerId) {
+            await AsyncStorage.setItem(WALLET_AUTH_USER_ID_KEY, verifiedUserId);
+          }
+          navigation.replace('Login');
+        } else {
+          await clearCachedAccountData();
+          navigation.replace('RestoreWallet', {
+            verifiedEmail,
+            walletAddress: existingProfile?.wallet_address || localWalletAddress || '',
+            displayName: existingProfile?.display_name || null,
+            profilePhotoUrl: existingProfile?.profile_photo_url || null,
+            accountSwitch: true,
+          });
+        }
+      } else {
         if (existingProfile?.wallet_address) {
           navigation.replace('RestoreWallet', {
             verifiedEmail,
             walletAddress: existingProfile.wallet_address,
             displayName: existingProfile.display_name || null,
-            cpayId: existingProfile.cpay_id || null,
             profilePhotoUrl: existingProfile.profile_photo_url || null,
           });
           setLoading(false);

@@ -15,9 +15,11 @@ import { OnboardingProgress } from '../components/OnboardingProgress';
 import { Screen } from '../components';
 import { cachePinForSession, createWallet } from '../services/wallet';
 import { supabase } from '../services/supabase';
+import { registerWalletAndSaveProfile } from '../services/profile';
 import { COLORS, SPACING, TYPOGRAPHY, createThemedStyles, useTheme } from '../constants/theme';
 import { AlertManager } from '../utils/alert';
-import { generateCPayId } from '../utils/cpayId';
+import { WALLET_AUTH_USER_ID_KEY } from '../services/auth';
+import { isWeakPin } from '../utils/pin';
 
 const FONT_SIZES = TYPOGRAPHY.sizes;
 
@@ -28,29 +30,14 @@ const waitForUiPaint = () =>
     });
   });
 
-const saveInitialUserRecord = (
-  walletAddress: string,
-  cpayId: string
-) => {
+const saveInitialUserRecord = (walletAddress: string) => {
   void (async () => {
     try {
-      const verifiedEmail = await AsyncStorage.getItem('user_email');
-      const { error: dbError } = await supabase
-        .from('users')
-        .upsert(
-          {
-            wallet_address: walletAddress,
-            email: verifiedEmail || null,
-            cpay_id: cpayId,
-            biometric_enabled: false,
-          },
-          { onConflict: 'wallet_address' }
-        );
-
-      if (dbError) {
-        Logger.error('Database error:', dbError);
-      }
+      // The relayer binds the wallet; the database then creates the profile
+      // row from that binding (#160). Clients never write wallet_address.
+      await registerWalletAndSaveProfile(walletAddress, { biometricEnabled: false });
     } catch (error) {
+      // ProfileSetup retries this and surfaces failures to the user.
       Logger.error('Database save failed:', error);
     }
   })();
@@ -79,6 +66,11 @@ export const ConfirmPINScreen: React.FC<ConfirmPINScreenProps> = ({
 
     if (pinToConfirm.length !== 6) {
       setError('Please enter a 6-digit PIN');
+      return;
+    }
+
+    if (isWeakPin(pinToConfirm)) {
+      setError('Please choose a stronger PIN');
       return;
     }
 
@@ -115,13 +107,17 @@ export const ConfirmPINScreen: React.FC<ConfirmPINScreenProps> = ({
       }
       await Promise.all([
         AsyncStorage.setItem('wallet_address', walletAddress),
-        AsyncStorage.setItem('cpay_id', cpayId),
+        AsyncStorage.removeItem('cpay_id'),
         AsyncStorage.setItem('biometric_enabled', 'false'),
-      ]);
+      ];
+      if (userData.user?.id) {
+        localWrites.push(AsyncStorage.setItem(WALLET_AUTH_USER_ID_KEY, userData.user.id));
+      }
+      await Promise.all(localWrites);
       cachePinForSession(originalPin);
 
       // Cloud save should not block local wallet creation or onboarding progress.
-      saveInitialUserRecord(walletAddress, cpayId);
+      saveInitialUserRecord(walletAddress);
 
       navigation.replace('ProfileSetup', { walletAddress, walletReplacement, cpayId });
     } catch (err) {

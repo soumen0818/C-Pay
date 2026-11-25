@@ -1,6 +1,6 @@
 BEGIN;
 
-SELECT plan(18);
+SELECT plan(20);
 
 SELECT has_table(
   'public',
@@ -49,6 +49,22 @@ SELECT ok(
       AND table_name IN ('merchants', 'merchant_qr_codes', 'merchant_contact_verifications')
   ),
   'no merchant table survives a clean provision'
+);
+
+SELECT hasnt_table(
+  'public',
+  'contract_intent_cache',
+  'the retired contract_intent_cache (Soroban) table is absent'
+);
+
+SELECT ok(
+  NOT EXISTS (
+    SELECT 1
+    FROM information_schema.tables
+    WHERE table_schema = 'public'
+      AND table_name = 'contract_intent_cache'
+  ),
+  'no Soroban table survives a clean provision'
 );
 
 SELECT ok(
@@ -125,6 +141,13 @@ VALUES
   ('11111111-1111-1111-1111-111111111111', 'GA_USER_1_WALLET_ADDR', 'user1@test.com'),
   ('22222222-2222-2222-2222-222222222222', 'GB_USER_2_WALLET_ADDR', 'user2@test.com'),
   ('33333333-3333-3333-3333-333333333333', 'GC_USER_3_WALLET_ADDR', 'user3@test.com');
+
+-- current_wallet_address() only honours relayer-written bindings (#160).
+INSERT INTO public.wallet_bindings (auth_user_id, wallet_address)
+VALUES
+  ('11111111-1111-1111-1111-111111111111', 'GA_USER_1_WALLET_ADDR'),
+  ('22222222-2222-2222-2222-222222222222', 'GB_USER_2_WALLET_ADDR'),
+  ('33333333-3333-3333-3333-333333333333', 'GC_USER_3_WALLET_ADDR');
 
 INSERT INTO public.transactions (tx_hash, from_address, to_address, amount, status)
 VALUES

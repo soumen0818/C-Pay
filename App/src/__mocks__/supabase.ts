@@ -9,6 +9,7 @@ export const supabase = {
     update: jest.fn().mockReturnThis(),
   })),
   rpc: jest.fn().mockResolvedValue({ data: [], error: null }),
+  removeAllChannels: jest.fn().mockResolvedValue([]),
   auth: {
     getSession: jest.fn().mockResolvedValue({ data: { session: null }, error: null }),
     getUser: jest.fn().mockResolvedValue({ data: { user: null }, error: null }),

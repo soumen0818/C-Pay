@@ -126,7 +126,6 @@ async function buildSponsoredAccountTransaction({
   sponsorSecret,
   newAccountPublicKey,
   newAccountSecret,
-  startingBalance = '1.5',
   timeoutSeconds = 60,
 }) {
   assertSecret(sponsorSecret, 'sponsor secret');
@@ -154,7 +153,9 @@ async function buildSponsoredAccountTransaction({
     }))
     .addOperation(StellarSdk.Operation.createAccount({
       destination: newAccountPublicKey,
-      startingBalance,
+      // The sponsor covers account reserves; granting a balance here would
+      // create spendable XLM that the account holder could withdraw.
+      startingBalance: '0',
     }))
     .addOperation(StellarSdk.Operation.endSponsoringFutureReserves({
       source: newAccountPublicKey,
