@@ -68,7 +68,7 @@ const ACCOUNT_READY_TIMEOUT_MS = 15000;
 const ACCOUNT_READY_POLL_MS = 1500;
 const CONTRACT_INTENT_TIMEOUT_MS = 60000;
 
-export type TransactionStatus = 'pending' | 'success' | 'failed' | 'unknown';
+export type TransactionStatus = 'pending' | 'success' | 'failed' | 'not_found' | 'unknown';
 
 export type PaymentOptions = {
   note?: string;
@@ -134,6 +134,13 @@ export function getNetworkConfig() {
     assetIssuer: USDC_ASSET_ISSUER,
     relayerUrl: RELAYER_URL,
   };
+}
+
+export function getNetworkDisplayName(network?: string): string {
+  const target = (network || STELLAR_NETWORK || '').toLowerCase();
+  if (target === 'testnet') return 'Stellar Testnet';
+  if (target === 'public' || target === 'mainnet') return 'Stellar Mainnet';
+  return `Stellar ${network || STELLAR_NETWORK}`;
 }
 
 export function isValidAccountId(accountId: string): boolean {
@@ -316,7 +323,7 @@ export async function sendPayment(
 
 export async function getTransactionReceipt(txHash: string) {
   const status = await getTransactionStatus(txHash);
-  if (status === 'unknown' || status === 'pending') {
+  if (status === 'unknown' || status === 'pending' || status === 'not_found') {
     return null;
   }
 
@@ -497,6 +504,11 @@ export async function relayerRequest<T = any>(
     } catch (error: any) {
       clearTimeout(timeout);
 
+      // If it was already thrown by us, rethrow immediately (do not retry client/server errors)
+      if (error instanceof RelayerRequestError) {
+        throw error;
+      }
+
       // If it's a timeout or network error, maybe retry if we haven't exhausted attempts
       const isAbort = error?.name === 'AbortError';
       if (attempt < maxAttempts) {
@@ -508,11 +520,6 @@ export async function relayerRequest<T = any>(
         throw new RelayerRequestError('Payment service is taking too long to respond. Please try again.', {
           code: 'RELAYER_TIMEOUT',
         });
-      }
-
-      // If it was already thrown by us, rethrow
-      if (error instanceof RelayerRequestError) {
-        throw error;
       }
 
       throw new RelayerRequestError(

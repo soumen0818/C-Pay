@@ -1,11 +1,27 @@
 import { Logger } from '../utils/logger';
 import { supabase } from './supabase';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { clearSessionPin } from './wallet';
+import { clearSessionPin, clearWallet } from './wallet';
+import { stopTransactionPolling } from './transactionMonitor';
 
 // Rate limiting constants
 const MAX_OTP_ATTEMPTS_PER_DAY = 10;
 const OTP_RATE_LIMIT_KEY = 'otp_rate_limit';
+export const WALLET_AUTH_USER_ID_KEY = 'wallet_auth_user_id';
+
+export async function clearCachedAccountData(): Promise<void> {
+  await AsyncStorage.multiRemove([
+    'transactions',
+    'display_name',
+    'cpay_id',
+    'profile_photo',
+    'profile_complete',
+    'user_name',
+    'notifications_enabled',
+    'cloud_backup_required',
+    'cloud_backup_complete',
+  ]);
+}
 
 function getRetryHours(resetTime: Date): number {
   return Math.max(1, Math.ceil((resetTime.getTime() - Date.now()) / (1000 * 60 * 60)));
@@ -304,6 +320,9 @@ export async function getRemainingAttempts(): Promise<{
  */
 export async function signOut(): Promise<void> {
   await supabase.auth.signOut();
+  stopTransactionPolling();
+  await supabase.removeAllChannels();
+  await clearCachedAccountData();
   await AsyncStorage.multiRemove([
     'auth_token',
     // Legacy phone-OTP keys: no longer written, cleared from older installs.
@@ -314,6 +333,31 @@ export async function signOut(): Promise<void> {
     'user_email',
   ]);
   clearSessionPin();
+}
+
+/**
+ * Permanently delete current user account via delete_my_account RPC and wipe local data (#228, #255)
+ */
+export async function deleteAccount(): Promise<void> {
+  // Best-effort cleanup of avatar in public storage bucket before RPC revokes auth
+  try {
+    const { data: userData } = await supabase.auth.getUser();
+    if (userData?.user?.id) {
+      await supabase.storage.from('profile-images').remove([`${userData.user.id}/avatar.jpg`]);
+    }
+  } catch (storageErr) {
+    Logger.warn('Failed to delete avatar from storage during account deletion:', storageErr);
+  }
+
+  const { error } = await supabase.rpc('delete_my_account');
+  if (error) {
+    Logger.error('Failed to execute delete_my_account RPC:', error);
+    throw error;
+  }
+
+  await signOut();
+  await clearWallet();
+  await AsyncStorage.clear();
 }
 
 // Note on session swapping (issue #2 / #32):

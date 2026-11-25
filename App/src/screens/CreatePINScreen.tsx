@@ -11,6 +11,7 @@ import { PINInput } from '../components/PINInput';
 import { OnboardingProgress } from '../components/OnboardingProgress';
 import { Screen } from '../components';
 import { COLORS, SPACING, TYPOGRAPHY, createThemedStyles, useTheme } from '../constants/theme';
+import { isWeakPin } from '../utils/pin';
 
 const FONT_SIZES = TYPOGRAPHY.sizes;
 
@@ -32,6 +33,12 @@ export const CreatePINScreen: React.FC<CreatePINScreenProps> = ({ navigation, ro
 
     if (pinToConfirm.length !== 6) {
       setError('Please enter a 6-digit PIN');
+      return;
+    }
+
+    if (isWeakPin(pinToConfirm)) {
+      setError('Please choose a stronger PIN');
+      setTimeout(() => setPin(''), 300);
       return;
     }
 

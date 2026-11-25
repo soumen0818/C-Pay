@@ -12,6 +12,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { COLORS, SPACING, TYPOGRAPHY, SHADOWS, createThemedStyles, useTheme } from '../constants/theme';
 import { Button, Screen, BottomActionBar } from '../components';
 import { PILOT_TESTNET_TEXT } from '../utils/pilot';
+import { ONBOARDING } from '../utils/strings';
 
 const FONT_SIZES = TYPOGRAPHY.sizes;
 const { height } = Dimensions.get('window');
@@ -46,7 +47,7 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({ navigation }
           resizeMode="contain"
         />
         <Text style={styles.title}>C-Pay</Text>
-        <Text style={styles.subtitle}>Closed pilot credits on Stellar testnet</Text>
+        <Text style={styles.subtitle}>{ONBOARDING.SUBTITLE}</Text>
       </View>
 
       {/* Features */}
@@ -64,7 +65,7 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({ navigation }
         <FeatureItem
           icon="card-outline"
           title="No Fee Hassle"
-          description="Network fees are handled for you. You test payments with pilot credits."
+          description={ONBOARDING.NO_FEE_DESC}
         />
         <FeatureItem
           icon="qr-code-outline"

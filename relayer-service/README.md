@@ -20,7 +20,10 @@ USDC_ASSET_ISSUER=GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5
 - `CPINR_ASSET_ISSUER`: issuer public key from blockchain setup
 - `SPONSOR_SECRET`: secret seed for the account that sponsors reserves and pays fees
 - `DISTRIBUTION_SECRET`: secret seed for the hot distribution account
-- `RELAYER_AUTH_REQUIRED`: set to `true` for production/public-network deployments
+- `RELAYER_AUTH_REQUIRED`: defaults to `true`; it may be set to `false` only when `NODE_ENV=development`
+- `MAX_SPONSORED_ACCOUNTS_PER_USER`: reserve-sponsorship budget per user (default: `5`). Sponsored accounts start with `0` XLM; the sponsor pays only account/trustline reserves and fee-bump fees, never a withdrawable balance.
+- `RELAYER_ADMIN_TOKEN`: required operator credential for `/health/detailed` and `/ingest/health`, sent as `X-Admin-Token`
+- `LOW_BALANCE_CHECK_INTERVAL_MS`: interval for background low-balance alert checks (default: `300000`)
 - `SUPABASE_JWT_SECRET`: optional legacy HS256 token verification; when omitted, the Supabase Auth API validates tokens
 - `SUPABASE_URL`: required with `SUPABASE_SERVICE_ROLE_KEY` whenever `RELAYER_AUTH_REQUIRED=true`
 - `SUPABASE_SERVICE_ROLE_KEY`: required with `SUPABASE_URL` whenever `RELAYER_AUTH_REQUIRED=true`
@@ -43,15 +46,15 @@ retryable `503` and do not submit funds.
 
 - `GET /`: Minimal service identifier and health check reference (route enumeration disabled)
 - `GET /health`: Unauthenticated minimal liveness probe (`{ "status": "ok" }`)
-- `GET /health/detailed`: Authenticated detailed health check including account balances and ingest status
-- `GET /ingest/health`: Authenticated ingest worker health and sanitized lag metrics
+- `GET /health/detailed`: Operator-token-only detailed health check including account balances and ingest status
+- `GET /ingest/health`: Operator-token-only ingest worker health and sanitized lag metrics
 - `GET /account/:accountId/status`: Authenticated wallet readiness check
 - `GET /account/:accountId/balance`: Authenticated wallet USDC balance check
 - `POST /accounts/prepare`: Authenticated prepared transaction creation
 - `POST /accounts/submit`: Authenticated user-signed transaction submission
 - `POST /payments/submit`: Authenticated sponsored payment submission
 - `POST /add-money`: Authenticated testnet faucet distribution
-- `GET /tx/:hash`: Authenticated, rate-limited Horizon transaction status lookup
+- `GET /tx/:hash`: Authenticated, rate-limited Horizon transaction status lookup. Returns `success`, `failed` (with `result_codes` when available), or `not_found`; a missing hash is never reported as pending.
 
 ## Multi-Instance Architecture & Coordination
 
@@ -94,10 +97,11 @@ The Ingest Worker continuously streams/polls Horizon payment operations:
 ## Production Notes
 
 - Put the relayer behind HTTPS.
-- Restrict `CORS_ORIGIN` to app domains/builds.
-- Enable `RELAYER_AUTH_REQUIRED=true` and configure Supabase token verification so only authenticated app users can spend sponsored relayer resources.
+- Restrict `CORS_ORIGIN` to app domains/builds. `*` is rejected when `NODE_ENV=production`.
+- Configure Supabase token verification so only authenticated app users can spend sponsored relayer resources. The relayer no longer accepts `EXPO_PUBLIC_SUPABASE_URL` as a server URL.
+- `/accounts/prepare` refuses unauthenticated sponsorship on the public network, even when a development configuration disables general user auth.
+- Set a strong `RELAYER_ADMIN_TOKEN` and provide it only to trusted monitoring systems; the detailed health endpoints return `403` without it, even when user authentication is disabled.
 - Leave `ENABLE_TESTNET_FAUCET=false`. Production money-in requires a licensed on-ramp partner.
 - Rotate `SPONSOR_SECRET` and `DISTRIBUTION_SECRET` through infrastructure secrets.
 - Keep `ADD_MONEY_AMOUNT`, `MAX_PAYMENT_AMOUNT`, and `ADD_MONEY_COOLDOWN_MS` policy controlled.
 - Configure `ALERT_WEBHOOK_URL` for low XLM or low CPINR inventory alerts.
-

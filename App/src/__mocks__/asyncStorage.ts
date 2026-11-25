@@ -2,6 +2,7 @@
 const store: Record<string, string> = {};
 
 const AsyncStorage = {
+  __store: store,
   getItem: jest.fn(async (key: string) => store[key] ?? null),
   setItem: jest.fn(async (key: string, value: string) => { store[key] = value; }),
   removeItem: jest.fn(async (key: string) => { delete store[key]; }),
@@ -12,4 +13,7 @@ const AsyncStorage = {
   multiRemove: jest.fn(async (keys: string[]) => { keys.forEach((k) => delete store[k]); }),
 };
 
+(AsyncStorage as any).default = AsyncStorage;
+
 export default AsyncStorage;
+module.exports = AsyncStorage;

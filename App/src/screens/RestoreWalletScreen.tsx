@@ -31,6 +31,8 @@ import { cachePinForSession, hasWallet, recreateWalletFromSecret } from '../serv
 import { supabase } from '../services/supabase';
 import { COLORS, SPACING, TYPOGRAPHY, BORDER_RADIUS, SHADOWS, createThemedStyles, useTheme } from '../constants/theme';
 import { AlertManager } from '../utils/alert';
+import { signOut, WALLET_AUTH_USER_ID_KEY } from '../services/auth';
+import { isWeakPin } from '../utils/pin';
 
 const FONT_SIZES = TYPOGRAPHY.sizes;
 
@@ -84,8 +86,8 @@ type RestoreWalletRouteParams = {
   verifiedEmail?: string;
   walletAddress: string;
   displayName?: string | null;
-  cpayId?: string | null;
   profilePhotoUrl?: string | null;
+  accountSwitch?: boolean;
 };
 
 interface RestoreWalletScreenProps {
@@ -103,8 +105,8 @@ export const RestoreWalletScreen: React.FC<RestoreWalletScreenProps> = ({ naviga
     verifiedEmail,
     walletAddress,
     displayName,
-    cpayId,
     profilePhotoUrl,
+    accountSwitch,
   } = route.params;
 
   const [state, setState] = useState<CheckState>('checking');
@@ -256,7 +258,7 @@ export const RestoreWalletScreen: React.FC<RestoreWalletScreenProps> = ({ naviga
     setError('');
 
     if (value.length === 6) {
-      if (['123456', '000000', '111111', '654321', '999999', '112233'].includes(value)) {
+      if (isWeakPin(value)) {
         setError('Please choose a stronger PIN. Avoid predictable sequences.');
         setTimeout(() => setPin(''), 250);
         return;
@@ -276,9 +278,12 @@ export const RestoreWalletScreen: React.FC<RestoreWalletScreenProps> = ({ naviga
 
     if (verifiedEmail) writes.push(['email_verified', 'true'], ['user_email', verifiedEmail]);
     if (displayName) writes.push(['display_name', displayName]);
-    if (cpayId) writes.push(['cpay_id', cpayId]);
     if (profilePhotoUrl) writes.push(['profile_photo', profilePhotoUrl]);
 
+    const { data: userData } = await supabase.auth.getUser();
+    if (userData.user?.id) writes.push([WALLET_AUTH_USER_ID_KEY, userData.user.id]);
+
+    await AsyncStorage.removeItem('cpay_id');
     await AsyncStorage.multiSet(writes);
   };
 
@@ -434,9 +439,18 @@ export const RestoreWalletScreen: React.FC<RestoreWalletScreenProps> = ({ naviga
 
           <TouchableOpacity
             style={styles.secondaryButton}
-            onPress={() => navigation.replace('Login')}
+            onPress={async () => {
+              if (accountSwitch) {
+                await signOut();
+                navigation.replace('EmailVerification');
+                return;
+              }
+              navigation.replace('Login');
+            }}
           >
-            <Text style={styles.secondaryButtonText}>Keep Current Wallet & Log In</Text>
+            <Text style={styles.secondaryButtonText}>
+              {accountSwitch ? 'Sign Back In As Previous Account' : 'Keep Current Wallet & Log In'}
+            </Text>
           </TouchableOpacity>
         </ScrollView>
       </Screen>

@@ -13,6 +13,8 @@
 
 'use strict';
 
+const initialEnv = { ...process.env };
+
 // ─── helpers ────────────────────────────────────────────────────────────────
 
 /**
@@ -21,7 +23,7 @@
  * verifySupabaseTokenWithAuthApi calls response.json().
  */
 function makeResponse(ok, status, data) {
-  const body = JSON.stringify(data);
+  const body = data === null || data === undefined ? '' : JSON.stringify(data);
   return {
     ok,
     status,
@@ -51,6 +53,27 @@ const USER_A = 'user-a-uid';
 const USER_B = 'user-b-uid';
 
 // ─── mock fetch ──────────────────────────────────────────────────────────────
+
+/**
+ * Apply PostgREST-style single-column `eq.` owner filters to mock rows. Logical
+ * groups (`or=`/`and=`) are rejected outright so tests fail if the relayer ever
+ * goes back to string-built filter groups (Issue #159).
+ */
+function applyOwnerFilters(parsed, rows) {
+  if (parsed.searchParams.has('or') || parsed.searchParams.has('and')) {
+    throw new Error('Logical PostgREST filter groups must not be used: ' + parsed.search);
+  }
+  const userFilter = parsed.searchParams.get('auth_user_id');
+  const walletFilter = parsed.searchParams.get('wallet_address');
+  if (!userFilter && !walletFilter) {
+    throw new Error('Unscoped owner lookup: ' + parsed.search);
+  }
+  return rows.filter(row => {
+    if (userFilter && `eq.${row.auth_user_id}` !== userFilter) return false;
+    if (walletFilter && `eq.${row.wallet_address}` !== walletFilter) return false;
+    return true;
+  });
+}
 
 /**
  * The server uses the global `fetch` API for Supabase REST and Auth API calls.
@@ -99,6 +122,9 @@ function buildFetchMock({
     if (urlStr.includes('/rest/v1/wallet_bindings')) {
       const parsed = new URL(urlStr);
       const method = (options && options.method) || 'GET';
+      if (walletBindingsUnavailable) {
+        return makeResponse(false, 503, { code: 'PGRST000', message: 'database unavailable' });
+      }
       if (method === 'POST') {
         if (failBindingWrite) {
           return makeResponse(false, 503, { code: 'PGRST000', message: 'database unavailable' });
@@ -107,6 +133,9 @@ function buildFetchMock({
         const wallets = userWallets[binding.auth_user_id] || (userWallets[binding.auth_user_id] = []);
         if (!wallets.includes(binding.wallet_address)) wallets.push(binding.wallet_address);
         return makeResponse(true, 201, null);
+      }
+      if (failOwnershipLookup && (parsed.searchParams.has('auth_user_id') || parsed.searchParams.has('wallet_address'))) {
+        return makeResponse(false, 503, { code: 'PGRST000', message: 'database unavailable' });
       }
       const authUserIdFilter = parsed.searchParams.get('auth_user_id') || '';
       if (authUserIdFilter) {
@@ -181,14 +210,16 @@ function buildFetchMock({
         if (failCooldownLookup) {
           return makeResponse(false, 503, { code: 'PGRST000', message: 'database unavailable' });
         }
+        applyOwnerFilters(parsed, persistence.claims);
         return makeResponse(true, 200, []);
       }
 
-      if (method === 'GET' && select === 'amount,claimed_at') {
+      if (method === 'GET' && select === 'id,amount,claimed_at') {
         if (failDailyCapLookup) {
           return makeResponse(false, 503, { code: 'PGRST000', message: 'database unavailable' });
         }
-        return makeResponse(true, 200, persistence.claims.map(row => ({
+        return makeResponse(true, 200, applyOwnerFilters(parsed, persistence.claims).map(row => ({
+          id: row.id,
           amount: row.amount,
           claimed_at: row.claimed_at,
         })));
@@ -225,7 +256,8 @@ function buildFetchMock({
       }
 
       if (method === 'GET') {
-        const records = (persistence.paymentRecords || []).map(r => ({
+        const records = applyOwnerFilters(parsed, persistence.paymentRecords || []).map(r => ({
+          id: r.id,
           amount: r.amount,
           created_at: r.created_at,
           wallet_address: r.wallet_address,
@@ -258,6 +290,7 @@ function buildFetchMock({
 
 let app;
 const activeModuleServers = new Set();
+let activeModuleServer = null;
 
 async function closeActiveModuleServers() {
   const servers = Array.from(activeModuleServers);
@@ -276,6 +309,9 @@ async function closeActiveModuleServers() {
  */
 async function loadServer(env = {}) {
   const mod = await loadServerModule(env);
+  if (mod.config.authRequired && mod.assertWalletBindingsReachable && !env.skipProbe) {
+    await mod.assertWalletBindingsReachable();
+  }
   app = mod.app;
   return app;
 }
@@ -294,9 +330,6 @@ async function loadServerModule(env = {}, { closeExisting = true } = {}) {
     ALLOW_HTTP_HORIZON: 'true',
     ALLOW_CUSTOM_HORIZON: 'true',
     STELLAR_HORIZON_URL: 'http://localhost:9999/horizon',
-    ALLOW_HTTP_SOROBAN_RPC: 'true',
-    ALLOW_CUSTOM_SOROBAN_RPC: 'true',
-    SOROBAN_RPC_URL: 'http://localhost:9999/soroban',
     STELLAR_NETWORK_PASSPHRASE: 'Test SDF Network ; September 2015',
     SPONSOR_SECRET: 'SCTIPFZ5KVBOENXTZK3FQPIGR5H73R5HE2MNZ4AXA7CA7JEEXUG5AF5G',
     DISTRIBUTION_SECRET: 'SBMJSD66AECV4CKZWTHXCH4EDZ5CRAZNNZL4OQP6IQAR4YLQ6HE5QJDM',
@@ -305,21 +338,32 @@ async function loadServerModule(env = {}, { closeExisting = true } = {}) {
     SUPABASE_SERVICE_ROLE_KEY: 'test-service-role-key',
     LEDGER_INGEST_ENABLED: 'false',
     RELAYER_AUTH_REQUIRED: 'true',
+    RELAYER_ADMIN_TOKEN: 'test-admin-token',
     ENABLE_TESTNET_FAUCET: 'true',
-    LEDGER_INGEST_ENABLED: 'false',
     PORT: '0',
+    SUPABASE_AUTH_FALLBACK_TO_API: 'true',
   };
 
-  const { __fetchMock, ...envOverrides } = env;
+  const { __fetchMock, ingestWorker, ...envOverrides } = env;
+  if (envOverrides.RELAYER_AUTH_REQUIRED === 'false' && !envOverrides.NODE_ENV) {
+    envOverrides.NODE_ENV = 'development';
+  }
   Object.assign(process.env, defaultEnv, envOverrides);
 
   // Mount our fetch mock onto the global so the module picks it up.
   const fetchImpl = __fetchMock || buildFetchMock();
   global.fetch = fetchImpl;
 
-  const mod = require('./server.js');
-  app = mod.app;
-  activeModuleServer = mod.server;
+  const { createApp } = require('../app.js');
+  const mod = createApp({
+    supabase: { fetch: fetchImpl },
+    ingestWorker,
+  });
+  app = mod;
+  mod.app = mod;
+  mod.server = null;
+  mod.SupabaseRequestError = createApp.SupabaseRequestError;
+  activeModuleServer = null;
   activeIngestWorker = mod.ingestWorker;
 
   return mod;
@@ -421,15 +465,13 @@ afterEach(async () => {
   }
 
   // Clean up env additions to avoid bleed between suites.
-  const ADDED_KEYS = [
-    'STELLAR_NETWORK', 'ALLOW_HTTP_HORIZON', 'ALLOW_CUSTOM_HORIZON',
-    'STELLAR_HORIZON_URL', 'ALLOW_HTTP_SOROBAN_RPC', 'ALLOW_CUSTOM_SOROBAN_RPC',
-    'SOROBAN_RPC_URL', 'STELLAR_NETWORK_PASSPHRASE', 'SPONSOR_SECRET',
-    'DISTRIBUTION_SECRET', 'CPINR_ASSET_ISSUER', 'SUPABASE_URL',
-    'SUPABASE_SERVICE_ROLE_KEY', 'RELAYER_AUTH_REQUIRED', 'ENABLE_ADD_MONEY',
-    'PORT', 'LEDGER_INGEST_ENABLED',
-  ];
-  ADDED_KEYS.forEach(k => delete process.env[k]);
+  for (const k of Object.keys(process.env)) {
+    if (!(k in initialEnv)) {
+      delete process.env[k];
+    } else {
+      process.env[k] = initialEnv[k];
+    }
+  }
   jest.resetModules();
 });
 
@@ -554,6 +596,24 @@ async function loadAccountSubmissionServer(userWallets) {
 
 describe('/accounts/submit prepared setup authorization', () => {
   const passphrase = 'Test SDF Network ; September 2015';
+
+  it('prepares newly sponsored accounts with zero spendable XLM', async () => {
+    const newWallet = StellarSdk.Keypair.random();
+    const mod = await loadAccountSubmissionServer({ [USER_A]: [WALLET_A] });
+
+    const prepare = await postJson(
+      mod.app,
+      '/accounts/prepare',
+      { accountId: newWallet.publicKey() },
+      { Authorization: makeBearerToken(USER_A) }
+    );
+
+    expect(prepare.status).toBe(200);
+    const transaction = StellarSdk.TransactionBuilder.fromXDR(prepare.body.xdr, passphrase);
+    const createAccount = transaction.operations.find(operation => operation.type === 'createAccount');
+    // The SDK normalizes the zero operation amount to seven decimal places.
+    expect(createAccount).toEqual(expect.objectContaining({ startingBalance: '0.0000000' }));
+  });
 
   it('allows an authenticated new wallet to prepare, sign, and submit its setup transaction', async () => {
     const newWallet = StellarSdk.Keypair.random();
@@ -736,7 +796,9 @@ describe('/add-money persistence safety', () => {
   it('reserves the persisted cooldown before submitting a payment', () => {
     const fs = require('fs');
     const path = require('path');
-    const source = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
+    const source = fs.existsSync(path.join(__dirname, '../app.js'))
+      ? fs.readFileSync(path.join(__dirname, '../app.js'), 'utf8')
+      : fs.readFileSync(path.join(__dirname, '../server.js'), 'utf8');
     const routeStart = source.indexOf("app.post('/add-money'");
     const routeEnd = source.indexOf("app.get('/tx/:hash'", routeStart);
     const routeSource = source.slice(routeStart, routeEnd);
@@ -835,6 +897,7 @@ describe('ownership checks skipped when auth is disabled', () => {
 
   beforeEach(async () => {
     expressApp = await loadServer({
+      NODE_ENV: 'development',
       RELAYER_AUTH_REQUIRED: 'false',
       SUPABASE_URL: '',
       SUPABASE_SERVICE_ROLE_KEY: '',
@@ -864,6 +927,27 @@ describe('ownership checks skipped when auth is disabled', () => {
 
     expect(status).not.toBe(403);
     expect(body.code).not.toBe('WALLET_OWNERSHIP_DENIED');
+  });
+
+  it('rejects /accounts/prepare when public-network authentication is disabled', async () => {
+    expressApp = await loadServer({
+      NODE_ENV: 'development',
+      STELLAR_NETWORK: 'public',
+      USDC_ASSET_ISSUER: 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+      RELAYER_AUTH_REQUIRED: 'false',
+      SUPABASE_URL: '',
+      SUPABASE_SERVICE_ROLE_KEY: '',
+      __fetchMock: buildFetchMock(),
+    });
+
+    const { status, body } = await postJson(
+      expressApp,
+      '/accounts/prepare',
+      { accountId: WALLET_B }
+    );
+
+    expect(status).toBe(403);
+    expect(body.code).toBe('PUBLIC_NETWORK_AUTH_REQUIRED');
   });
 });
 
@@ -937,6 +1021,19 @@ describe('ownership infrastructure failures', () => {
     })).rejects.toThrow(/SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY/);
     expect(activeModuleServers.size).toBe(0);
   });
+
+  it('bindWalletToUser updates ingestWorker cache and triggers backfill', async () => {
+    const fakeIngestWorker = {
+      walletUserCache: new Map(),
+      backfillWallet: jest.fn().mockResolvedValue({ processed: 2 }),
+    };
+    const loadedApp = await loadServer({
+      ingestWorker: fakeIngestWorker,
+    });
+    await loadedApp.bindWalletToUser('user-test-bind', 'GABIND_TEST_WALLET_1');
+    expect(fakeIngestWorker.walletUserCache.get('GABIND_TEST_WALLET_1')).toBe('user-test-bind');
+    expect(fakeIngestWorker.backfillWallet).toHaveBeenCalledWith('GABIND_TEST_WALLET_1', 'user-test-bind');
+  });
 });
 
 // ── unauthenticated requests ──────────────────────────────────────────────────
@@ -974,14 +1071,14 @@ describe('unauthenticated requests are rejected before ownership check', () => {
     expect(body.code).toBe('AUTH_REQUIRED');
   });
 
-  it('returns 401 when no token is provided to /ingest/health', async () => {
+  it('returns 403 when no operator token is provided to /ingest/health', async () => {
     const { status, body } = await getJson(
       expressApp,
       '/ingest/health'
     );
 
-    expect(status).toBe(401);
-    expect(body.code).toBe('AUTH_REQUIRED');
+    expect(status).toBe(403);
+    expect(body.code).toBe('ADMIN_AUTH_REQUIRED');
   });
 
   it('returns 401 when no token is provided to /tx/:hash', async () => {
@@ -1006,6 +1103,192 @@ describe('unauthenticated requests are rejected before ownership check', () => {
       health: '/health',
     });
     expect(body.endpoints).toBeUndefined();
+  });
+});
+
+describe('GET /tx/:hash status mapping', () => {
+  const TX_HASH = 'a'.repeat(64);
+
+  it('returns failed and Horizon result codes for a mocked failed transaction', async () => {
+    const mod = await loadServerModule({
+      __fetchMock: buildFetchMock({ userWallets: { [USER_A]: [WALLET_A] } }),
+    });
+    const failedHorizonTx = {
+      successful: false,
+      ledger: 123,
+      created_at: '2026-01-02T03:04:05Z',
+      fee_charged: '100',
+      result_codes: {
+        transaction: 'tx_failed',
+        operations: ['op_underfunded'],
+      },
+    };
+    const call = jest.fn().mockResolvedValue(failedHorizonTx);
+    mod.testHooks.stellarServer.transactions = jest.fn(() => ({
+      transaction: jest.fn(() => ({ call })),
+    }));
+
+    const { status, body } = await getJson(mod.app, `/tx/${TX_HASH}`, {
+      Authorization: makeBearerToken(USER_A),
+    });
+
+    expect(status).toBe(200);
+    expect(body).toEqual(expect.objectContaining({
+      hash: TX_HASH,
+      status: 'failed',
+      result_codes: failedHorizonTx.result_codes,
+    }));
+    expect(call).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns not_found rather than pending when Horizon does not know the hash', async () => {
+    const mod = await loadServerModule({
+      __fetchMock: buildFetchMock({ userWallets: { [USER_A]: [WALLET_A] } }),
+    });
+    mod.testHooks.stellarServer.transactions = jest.fn(() => ({
+      transaction: jest.fn(() => ({
+        call: jest.fn().mockRejectedValue({ response: { status: 404 } }),
+      })),
+    }));
+
+    const { status, body } = await getJson(mod.app, `/tx/${TX_HASH}`, {
+      Authorization: makeBearerToken(USER_A),
+    });
+
+    expect(status).toBe(200);
+    expect(body).toEqual({ hash: TX_HASH, status: 'not_found' });
+  });
+});
+
+describe('operator health endpoints', () => {
+  it.each(['/health/detailed', '/ingest/health'])(
+    'rejects ordinary users on %s when relayer authentication is enabled',
+    async path => {
+      const expressApp = await loadServer();
+      const { status, body } = await getJson(expressApp, path, {
+        Authorization: makeBearerToken(USER_A),
+      });
+
+      expect(status).toBe(403);
+      expect(body.code).toBe('ADMIN_AUTH_REQUIRED');
+    }
+  );
+
+  it.each(['/health/detailed', '/ingest/health'])(
+    'rejects requests on %s when user authentication is disabled',
+    async path => {
+      const expressApp = await loadServer({ RELAYER_AUTH_REQUIRED: 'false' });
+      const { status, body } = await getJson(expressApp, path);
+
+      expect(status).toBe(403);
+      expect(body.code).toBe('ADMIN_AUTH_REQUIRED');
+    }
+  );
+
+  it('allows operator-token monitoring and keeps the public probe minimal', async () => {
+    const expressApp = await loadServer();
+    const operatorHeaders = { 'X-Admin-Token': 'test-admin-token' };
+    const ingest = await getJson(expressApp, '/ingest/health', operatorHeaders);
+    const publicHealth = await getJson(expressApp, '/health');
+
+    expect(ingest.status).toBe(200);
+    expect(ingest.body).toHaveProperty('status');
+    expect(publicHealth.status).toBe(200);
+    expect(publicHealth.body).toEqual({ status: 'ok' });
+  });
+
+  it('serves detailed health to the operator without triggering alerts', async () => {
+    const fetchCalls = [];
+    const mod = await loadServerModule({
+      RELAYER_AUTH_REQUIRED: 'false',
+      RELAYER_ADMIN_TOKEN: 'operator-secret',
+      ALERT_WEBHOOK_URL: 'https://alerts.example.test',
+      SUPABASE_URL: '',
+      SUPABASE_SERVICE_ROLE_KEY: '',
+      __fetchMock: async (url, options) => {
+        fetchCalls.push({ url: String(url), options });
+        return makeResponse(true, 200, {});
+      },
+    });
+    jest.spyOn(mod.testHooks.stellarServer, 'loadAccount').mockResolvedValue({
+      balances: [
+        { asset_type: 'native', balance: '10' },
+        {
+          asset_code: 'USDC',
+          asset_issuer: 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5',
+          balance: '200',
+        },
+      ],
+    });
+
+    const { status, body } = await getJson(mod.app, '/health/detailed', {
+      'X-Admin-Token': 'operator-secret',
+    });
+
+    expect(status).toBe(200);
+    expect(body).toMatchObject({
+      status: 'healthy',
+      sponsorXlmBalance: '10',
+      distributionUsdcBalance: '200',
+      lowXlm: false,
+      lowAsset: false,
+    });
+    expect(fetchCalls).toHaveLength(0);
+  });
+
+  it('reports detailed health failures without exposing upstream errors', async () => {
+    const mod = await loadServerModule();
+    jest.spyOn(mod.testHooks.stellarServer, 'loadAccount').mockRejectedValue(
+      new Error('sensitive upstream details')
+    );
+
+    const { status, body } = await getJson(mod.app, '/health/detailed', {
+      'X-Admin-Token': 'test-admin-token',
+    });
+
+    expect(status).toBe(500);
+    expect(body).toEqual({
+      error: 'Detailed health check failed',
+      code: 'HEALTH_CHECK_FAILED',
+    });
+  });
+
+  it('returns a generic response for PostgREST conflicts and logs details server-side', async () => {
+    const mod = await loadServerModule();
+    const error = new mod.SupabaseRequestError({
+      status: 409,
+      code: '23505',
+      message: 'duplicate key violates constraint "private_table_pkey"',
+      details: 'conflicting internal database record',
+    });
+    const response = {};
+    const logger = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const res = {
+      status(status) {
+        response.status = status;
+        return this;
+      },
+      json(body) {
+        response.body = body;
+        return this;
+      },
+    };
+
+    mod.testHooks.handleRelayerError(error, {}, res, () => {});
+
+    expect(response).toEqual({
+      status: 409,
+      body: {
+        error: 'Relayer service error',
+        code: 'INTERNAL_ERROR',
+      },
+    });
+    expect(JSON.stringify(response.body)).not.toMatch(/23505|private_table|conflicting internal/i);
+    expect(logger).toHaveBeenCalledWith('Relayer error:', expect.objectContaining({
+      message: expect.stringContaining('private_table_pkey'),
+      status: 409,
+    }));
+    logger.mockRestore();
   });
 });
 
@@ -1073,6 +1356,91 @@ describe('Payment transaction limits and velocity enforcement (#114)', () => {
       amount: 4500,
       transactions: 18,
     });
+  });
+
+  it('GET /payments/limits rejects a PostgREST filter injection payload with 400 (#159)', async () => {
+    persistence.paymentRecords = [
+      { id: 'rec-a', auth_user_id: USER_A, wallet_address: WALLET_A, amount: '100', created_at: new Date().toISOString() },
+      { id: 'rec-b', auth_user_id: USER_B, wallet_address: WALLET_B, amount: '900', created_at: new Date().toISOString() },
+    ];
+
+    for (const payload of [
+      'x,auth_user_id.not.is.null',
+      `${WALLET_A},auth_user_id.not.is.null`,
+      `${WALLET_A})`,
+    ]) {
+      const { status, body } = await getJson(
+        expressApp,
+        `/payments/limits?accountId=${encodeURIComponent(payload)}`,
+        { Authorization: makeBearerToken(USER_A) }
+      );
+      expect(status).toBe(400);
+      expect(body.code).toBe('INVALID_ACCOUNT_ID');
+    }
+
+    // Repeated query keys arrive as arrays and are rejected too.
+    const repeated = await getJson(
+      expressApp,
+      `/payments/limits?accountId=${WALLET_A}&accountId=${WALLET_B}`,
+      { Authorization: makeBearerToken(USER_A) }
+    );
+    expect(repeated.status).toBe(400);
+  });
+
+  it('GET /payments/limits returns 403 for a wallet bound to another user (#159)', async () => {
+    persistence.paymentRecords = [
+      { id: 'rec-b', auth_user_id: USER_B, wallet_address: WALLET_B, amount: '900', created_at: new Date().toISOString() },
+    ];
+
+    const { status, body } = await getJson(
+      expressApp,
+      `/payments/limits?accountId=${WALLET_B}`,
+      { Authorization: makeBearerToken(USER_A) }
+    );
+    expect(status).toBe(403);
+    expect(body.code).toBe('WALLET_OWNERSHIP_DENIED');
+    expect(body.amountToday).toBeUndefined();
+  });
+
+  it('GET /payments/limits only counts the caller\'s own records (#159)', async () => {
+    persistence.paymentRecords = [
+      { id: 'rec-a', auth_user_id: USER_A, wallet_address: WALLET_A, amount: '100', created_at: new Date().toISOString() },
+      { id: 'rec-b', auth_user_id: USER_B, wallet_address: WALLET_B, amount: '900', created_at: new Date().toISOString() },
+    ];
+
+    const withoutAccount = await getJson(expressApp, '/payments/limits', { Authorization: makeBearerToken(USER_A) });
+    expect(withoutAccount.status).toBe(200);
+    expect(withoutAccount.body.amountToday).toBe(100);
+    expect(withoutAccount.body.transactionsToday).toBe(1);
+
+    // An owned wallet matches the same row via both owner columns; it must be counted once.
+    const withAccount = await getJson(
+      expressApp,
+      `/payments/limits?accountId=${WALLET_A}`,
+      { Authorization: makeBearerToken(USER_A) }
+    );
+    expect(withAccount.status).toBe(200);
+    expect(withAccount.body.amountToday).toBe(100);
+    expect(withAccount.body.transactionsToday).toBe(1);
+  });
+
+  it('GET /payments/limits requires a valid accountId when auth is disabled (#159)', async () => {
+    const devMod = await loadServerModule({
+      RELAYER_AUTH_REQUIRED: 'false',
+      __fetchMock: buildFetchMock({ database: persistence }),
+    });
+    persistence.paymentRecords = [
+      { id: 'rec-a', auth_user_id: null, wallet_address: WALLET_A, amount: '100', created_at: new Date().toISOString() },
+      { id: 'rec-b', auth_user_id: null, wallet_address: WALLET_B, amount: '900', created_at: new Date().toISOString() },
+    ];
+
+    const missing = await getJson(devMod.app, '/payments/limits');
+    expect(missing.status).toBe(400);
+    expect(missing.body.code).toBe('ACCOUNT_ID_REQUIRED');
+
+    const scoped = await getJson(devMod.app, `/payments/limits?accountId=${WALLET_A}`);
+    expect(scoped.status).toBe(200);
+    expect(scoped.body.amountToday).toBe(100);
   });
 
   it('rejects payments exceeding the per-transaction cap (e.g. 1500 > 1000)', async () => {
@@ -1434,5 +1802,105 @@ describe('Multi-instance coordination and bounded memory state', () => {
       expect(result).toEqual({ acquired: false, response: cachedResponse });
     });
   });
-});
 
+  describe('Issue #178: Low-balance alert deduplication and fetch timeouts', () => {
+    it('sends only one alert for 10 account prepares while sponsor balance is low', async () => {
+      const alertCalls = [];
+      const customFetch = jest.fn(async (url, options) => {
+        const urlStr = String(url);
+        if (urlStr.includes('alerts.example.test')) {
+          alertCalls.push({ url: urlStr, options });
+          return makeResponse(true, 200, {});
+        }
+        return buildFetchMock({ userWallets: { [USER_A]: [WALLET_A] } })(url, options);
+      });
+
+      const mod = await loadServerModule({
+        ALERT_WEBHOOK_URL: 'https://alerts.example.test',
+        __fetchMock: customFetch,
+      });
+
+      // Mock Horizon loadAccount returning a low sponsor balance (e.g. 1 XLM < threshold 5)
+      jest.spyOn(mod.testHooks.stellarServer, 'loadAccount').mockResolvedValue({
+        sequence: '100',
+        balances: [
+          { asset_type: 'native', balance: '1' },
+          { asset_code: 'USDC', asset_issuer: 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5', balance: '1000' },
+        ],
+      });
+
+      // Perform 10 prepares while low
+      for (let i = 0; i < 10; i++) {
+        await postJson(
+          mod.app,
+          '/accounts/prepare',
+          { accountId: WALLET_A },
+          { Authorization: makeBearerToken(USER_A) }
+        );
+      }
+
+      // Exactly 1 alert should have been dispatched to the webhook
+      expect(alertCalls).toHaveLength(1);
+      expect(JSON.parse(alertCalls[0].options.body)).toMatchObject({
+        service: 'cpay-stellar-relayer',
+        warnings: expect.arrayContaining([expect.stringContaining('Sponsor XLM balance is 1')]),
+      });
+      // The outbound fetch to the webhook must carry an AbortSignal timeout
+      expect(alertCalls[0].options.signal).toBeDefined();
+    });
+
+    it('enforces separate cooldowns per condition (sponsor vs distribution)', async () => {
+      const alertCalls = [];
+      const customFetch = jest.fn(async (url, options) => {
+        const urlStr = String(url);
+        if (urlStr.includes('alerts.example.test')) {
+          alertCalls.push({ url: urlStr, options });
+          return makeResponse(true, 200, {});
+        }
+        return buildFetchMock()(url, options);
+      });
+
+      const mod = await loadServerModule({
+        ALERT_WEBHOOK_URL: 'https://alerts.example.test',
+        __fetchMock: customFetch,
+      });
+
+      // Condition 1: sponsor balance
+      const sponsorAlert1 = await mod.testHooks.shouldSendLowBalanceAlert('sponsor_balance');
+      expect(sponsorAlert1).toBe(true);
+      const sponsorAlert2 = await mod.testHooks.shouldSendLowBalanceAlert('sponsor_balance');
+      expect(sponsorAlert2).toBe(false);
+
+      // Condition 2: distribution balance should not be blocked by sponsor balance cooldown
+      const distAlert1 = await mod.testHooks.shouldSendLowBalanceAlert('distribution_balance');
+      expect(distAlert1).toBe(true);
+      const distAlert2 = await mod.testHooks.shouldSendLowBalanceAlert('distribution_balance');
+      expect(distAlert2).toBe(false);
+    });
+
+    it('passes an AbortSignal timeout on Supabase Auth API calls', async () => {
+      let authCallSignal = null;
+      const customFetch = jest.fn(async (url, options) => {
+        const urlStr = String(url);
+        if (urlStr.includes('/auth/v1/user')) {
+          authCallSignal = options?.signal;
+          return makeResponse(true, 200, { id: 'test-user', role: 'authenticated', aud: 'authenticated' });
+        }
+        return buildFetchMock()(url, options);
+      });
+
+      const mod = await loadServerModule({
+        RELAYER_AUTH_REQUIRED: 'true',
+        SUPABASE_URL: 'http://localhost:9999/supabase',
+        SUPABASE_SERVICE_ROLE_KEY: 'test-service-role-key',
+        __fetchMock: customFetch,
+      });
+
+      await getJson(mod.app, '/account/' + WALLET_A + '/status', {
+        Authorization: makeBearerToken('test-user'),
+      });
+
+      expect(authCallSignal).toBeDefined();
+    });
+  });
+});

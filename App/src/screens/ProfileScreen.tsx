@@ -7,14 +7,16 @@ import {
   StyleSheet,
   TouchableOpacity,
 } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, SPACING, FONT_SIZES, BORDER_RADIUS, SHADOWS, createThemedStyles, useTheme } from '../constants/theme';
 import { Screen, Section, ActionRow } from '../components';
 import { ProfileHeader } from '../components/profile';
 import { useProfileData } from '../hooks/useProfileData';
 import { AlertManager } from '../utils/alert';
-import { clearSessionPin } from '../services/wallet';
+import { signOut, deleteAccount } from '../services/auth';
+import { APP_VERSION } from '../utils/version';
+import { getNetworkConfig, getNetworkDisplayName } from '../services/blockchain';
+import { PROFILE } from '../utils/strings';
 interface ProfileScreenProps {
   navigation: any;
 }
@@ -40,16 +42,56 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({ navigation }) => {
           text: 'Sign Out',
           style: 'destructive',
           onPress: async () => {
-            await AsyncStorage.removeItem('auth_token');
-            await AsyncStorage.removeItem('phone_verified');
-            await AsyncStorage.removeItem('phone_number');
-            await AsyncStorage.removeItem('user_phone');
-            await AsyncStorage.removeItem('email_verified');
-            await AsyncStorage.removeItem('user_email');
-            clearSessionPin();
-            AlertManager.alert('Signed Out', 'You have been signed out successfully.', [
-              { text: 'OK', onPress: () => navigation.replace('Splash') },
-            ]);
+            try {
+              await signOut();
+              AlertManager.alert('Signed Out', 'You have been signed out successfully.', [
+                {
+                  text: 'OK',
+                  onPress: () =>
+                    navigation.reset({
+                      index: 0,
+                      routes: [{ name: 'Splash' }],
+                    }),
+                },
+              ]);
+            } catch {
+              AlertManager.alert('Sign Out Failed', 'Unable to sign out. Please try again.', undefined, {
+                type: 'error',
+              });
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleDeleteAccount = () => {
+    AlertManager.alert(
+      'Delete Account',
+      'Are you sure you want to permanently delete your account? This action removes your profile, C-Pay ID, cloud backup, and all server data. This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete Account',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteAccount();
+              AlertManager.alert('Account Deleted', 'Your account has been deleted successfully.', [
+                {
+                  text: 'OK',
+                  onPress: () =>
+                    navigation.reset({
+                      index: 0,
+                      routes: [{ name: 'Splash' }],
+                    }),
+                },
+              ]);
+            } catch {
+              AlertManager.alert('Delete Failed', 'Unable to delete account. Please try again.', undefined, {
+                type: 'error',
+              });
+            }
           },
         },
       ]
@@ -75,6 +117,16 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({ navigation }) => {
             title="Security Center"
             subtitle="PIN, biometrics, backup, wallet keys"
             onPress={() => navigation.navigate('SecurityCenter')}
+          />
+          <View style={styles.divider} />
+          <ActionRow
+            style={styles.rowFlat}
+            icon="trash-outline"
+            iconColor={COLORS.error}
+            iconBackground={COLORS.error + '15'}
+            title="Delete my account"
+            subtitle="Permanently erase profile, backups, and local data"
+            onPress={handleDeleteAccount}
           />
         </View>
       </Section>
@@ -131,19 +183,23 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({ navigation }) => {
         </View>
       </Section>
 
-      {/* Sign out */}
+      {/* Sign out and Account Deletion */}
       <View style={styles.signOutSection}>
         <TouchableOpacity style={styles.signOutButton} onPress={handleSignOut}>
           <Ionicons name="log-out-outline" size={20} color={COLORS.error} style={styles.signOutButtonIcon} />
           <Text style={styles.signOutButtonText}>Sign Out</Text>
         </TouchableOpacity>
-        <Text style={styles.signOutHint}>Your wallet will be safe. Sign back in anytime.</Text>
+        <TouchableOpacity style={styles.deleteAccountButton} onPress={handleDeleteAccount}>
+          <Ionicons name="trash-outline" size={18} color={COLORS.error} style={styles.signOutButtonIcon} />
+          <Text style={styles.deleteAccountButtonText}>Delete Account</Text>
+        </TouchableOpacity>
+        <Text style={styles.signOutHint}>Your wallet is safe when signing out. Deleting your account permanently deletes server data.</Text>
       </View>
 
       <View style={styles.footer}>
-        <Text style={styles.footerText}>C-Pay v1.0.3</Text>
-        <Text style={styles.footerSubtext}>Built for closed-pilot test payments</Text>
-        <Text style={styles.footerSubtext}>Stellar Testnet</Text>
+        <Text style={styles.footerText}>C-Pay v{APP_VERSION}</Text>
+        <Text style={styles.footerSubtext}>{PROFILE.FOOTER_PILOT}</Text>
+        <Text style={styles.footerSubtext}>{getNetworkDisplayName(getNetworkConfig().network)}</Text>
       </View>
     </Screen>
   );
@@ -182,6 +238,22 @@ const styles = createThemedStyles((COLORS) => ({
   },
   signOutButtonIcon: {
     marginRight: SPACING.sm,
+  },
+  deleteAccountButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'transparent',
+    borderWidth: 1,
+    borderColor: COLORS.error + '40',
+    padding: SPACING.md,
+    borderRadius: BORDER_RADIUS.md,
+    marginBottom: SPACING.sm,
+  },
+  deleteAccountButtonText: {
+    fontSize: FONT_SIZES.md,
+    fontWeight: '600',
+    color: COLORS.error,
   },
   signOutButtonText: {
     fontSize: FONT_SIZES.md,

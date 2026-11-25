@@ -29,6 +29,7 @@ import {
 } from '../utils/currency';
 import { PILOT_NOTICE_TEXT, PILOT_NOTICE_TITLE } from '../utils/pilot';
 import { usePaymentIntent } from '../hooks/usePaymentIntent';
+import { A11Y, HOME as HOME_STRINGS } from '../utils/strings';
 import {
   LoadingSpinner,
   TransactionItem,
@@ -87,17 +88,17 @@ const getRetryAfterSecondsFromError = (error: unknown): number => {
 
 const getAddMoneyCooldownMessage = (retryAfterSeconds: number): string => {
   if (retryAfterSeconds > 0) {
-    return `You can claim pilot credits again in ${formatTimeRemaining(retryAfterSeconds)}.`;
+    return HOME_STRINGS.CLAIM_COOLDOWN(formatTimeRemaining(retryAfterSeconds));
   }
 
-  return 'Pilot credits are available now. You can claim again.';
+  return HOME_STRINGS.CLAIM_AVAILABLE;
 };
 
 const getAddMoneyErrorMessage = (error: unknown): string => {
   const addMoneyError = error as Partial<AddMoneyError>;
   const message = typeof addMoneyError.message === 'string'
     ? addMoneyError.message
-    : 'Failed to claim pilot credits';
+    : HOME_STRINGS.CLAIM_FAILED_FALLBACK;
   const lowerMessage = message.toLowerCase();
   const code = addMoneyError.code || '';
   const retryAfterSeconds = getNormalizedRetryAfterSeconds(addMoneyError.retryAfterSeconds);
@@ -107,23 +108,23 @@ const getAddMoneyErrorMessage = (error: unknown): string => {
       return getAddMoneyCooldownMessage(retryAfterSeconds);
     }
 
-    return 'Please wait 24 hours between pilot credit claims.';
+    return HOME_STRINGS.CLAIM_WAIT_24H;
   }
 
   if (code === 'DISTRIBUTION_LOW_ASSET' || (lowerMessage.includes('insufficient') && lowerMessage.includes('usdc'))) {
-    return 'Pilot credit claims are temporarily unavailable because the relayer distribution account has no test asset balance.';
+    return HOME_STRINGS.CLAIM_DISTRIBUTION_EMPTY;
   }
 
   if (code === 'ACCOUNT_NOT_READY') {
-    return 'Wallet setup could not finish yet. Please try again in a few seconds.';
+    return HOME_STRINGS.CLAIM_ACCOUNT_NOT_READY;
   }
 
   if (code === 'ADD_MONEY_DISABLED') {
-    return 'Pilot credit claims are disabled for this network.';
+    return HOME_STRINGS.CLAIM_DISABLED_NETWORK;
   }
 
   if (code === 'WALLET_OWNERSHIP_DENIED') {
-    return 'Your wallet does not match your account. Sign out, sign back in, and try again.';
+    return HOME_STRINGS.CLAIM_WALLET_OWNERSHIP_DENIED;
   }
 
   if (code === 'RELAYER_TIMEOUT' || lowerMessage.includes('taking too long')) {
@@ -144,21 +145,21 @@ const getAddMoneyErrorMessage = (error: unknown): string => {
 const getAddMoneyTitle = (phase: AddMoneyPhase): string => {
   switch (phase) {
     case 'checking':
-      return 'Checking Claim';
+      return HOME_STRINGS.CLAIM_CHECKING;
     case 'confirm':
-      return 'Claim Pilot Credits';
+      return HOME_STRINGS.CLAIM_BUTTON;
     case 'authenticating':
-      return 'Authentication Required';
+      return HOME_STRINGS.CLAIM_AUTH_REQUIRED;
     case 'processing':
-      return 'Claiming Credits';
+      return HOME_STRINGS.CLAIM_BUTTON_CLAIMING;
     case 'success':
-      return 'Credits Added';
+      return HOME_STRINGS.CLAIM_BUTTON_SUCCESS;
     case 'cooldown':
       return 'Next Claim Available';
     case 'error':
-      return 'Credit Claim Failed';
+      return HOME_STRINGS.CLAIM_BUTTON_FAILED;
     default:
-      return 'Claim Pilot Credits';
+      return HOME_STRINGS.CLAIM_BUTTON;
   }
 };
 
@@ -221,67 +222,52 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
     startTransactionPolling(15000); // Poll every 15 seconds
     
     // Listen for new transactions (real-time updates within same app)
-    const transactionListener = (transaction: Transaction) => {
+    const transactionListener = async (_transaction: Transaction) => {
       loadTransactions();
-      // Also refresh balance
-      if (walletAddress) {
-        loadBalance(walletAddress);
+      const currentAddress = await AsyncStorage.getItem('wallet_address');
+      if (currentAddress) {
+        loadBalance(currentAddress);
       }
     };
     
     storageEvents.on('transactionSaved', transactionListener);
     
-    // Setup Supabase real-time subscription for incoming transactions (for receivers)
-    let supabaseSubscription: any = null;
-    
-    const setupRealtimeSubscription = async () => {
-      if (!walletAddress) return;
-
-      // Guard against filter-injection: validate the wallet address before
-      // interpolating it into the PostgREST realtime filter string.
-      // supabase-js realtime only accepts filter as a raw string, so strict
-      // call-boundary validation is the correct mitigation here.
-      // isValidAccountId uses the Stellar SDK's Ed25519 public-key checker,
-      // which rejects anything that isn't a well-formed G-account address.
-      if (!isValidAccountId(walletAddress)) {
-        return;
-      }
-      
-      Logger.info('🔔 Setting up Supabase real-time subscription');
-      
-      // walletAddress is a validated Stellar Ed25519 public key (56-char base32
-      // starting with "G"), so interpolation here cannot carry filter syntax.
-      supabaseSubscription = supabase
-        .channel('transactions')
-        .on(
-          'postgres_changes',
-          {
-            event: 'INSERT',
-            schema: 'public',
-            table: 'transactions',
-            filter: `to_address=eq.${walletAddress}`,
-          },
-          (payload) => {
-            loadTransactions();
-            loadBalance(walletAddress);
-          }
-        )
-        .subscribe();
-    };
-    
-    if (walletAddress) {
-      setupRealtimeSubscription();
-    }
-    
-    // Cleanup on unmount
     return () => {
       stopTransactionPolling();
       storageEvents.off('transactionSaved', transactionListener);
-      
-      if (supabaseSubscription) {
-        supabase.removeChannel(supabaseSubscription);
-        Logger.info('🚫 Unsubscribed from Supabase real-time');
-      }
+    };
+  }, []);
+
+  // Setup Supabase real-time subscription for incoming transactions (for receivers)
+  // Scoped strictly to the validated recipient address so animations and polling are not restarted
+  useEffect(() => {
+    if (!walletAddress || !isValidAccountId(walletAddress)) {
+      return;
+    }
+
+    Logger.info('🔔 Setting up Supabase real-time subscription for incoming payments');
+
+    const channel = supabase
+      .channel(`transactions_incoming_${walletAddress}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'transactions',
+          filter: `to_address=eq.${walletAddress}`,
+        },
+        (payload) => {
+          Logger.info('🔔 Realtime incoming payment received:', payload);
+          loadTransactions();
+          loadBalance(walletAddress);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+      Logger.info('🚫 Unsubscribed from Supabase real-time incoming payments');
     };
   }, [walletAddress]);
 
@@ -581,7 +567,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
           onPress={handleSendMoney}
           activeOpacity={0.8}
           accessibilityRole="button"
-          accessibilityLabel="Send credits"
+          accessibilityLabel={A11Y.SEND_USDC}
           accessibilityHint="Go to send money screen"
         >
           <View
@@ -592,7 +578,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
             <Ionicons name="send-outline" size={23} color={COLORS.primary} />
           </View>
           <Text style={styles.actionTitle} importantForAccessibility="no-hide-descendants">
-            Send Credits
+            {HOME_STRINGS.SEND_USDC}
           </Text>
         </TouchableOpacity>
 
@@ -691,7 +677,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
         currentWallet={walletAddress}
       />
 
-      {/* Add-money / claim credits status flow */}
+      {/* Add-money / claim testnet USDC status flow */}
       <StatusSheet
         visible={addMoneyPhase !== 'idle'}
         variant={statusVariant}
